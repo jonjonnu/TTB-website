@@ -54,6 +54,11 @@ type Emp = { id: string; employeeCode: string; gender: Gender; department: strin
 type Round = { id: string; type: "BIG_LOT" | "NEW_JOINERS"; year: number; opensAt: Date };
 
 async function main() {
+  // On deploy (vercel-build) only fill an empty database; never wipe one that already has data.
+  if (process.env.SEED_IF_EMPTY === "1" && (await db.employee.count()) > 0) {
+    console.log("Database already has data, skipping sample data.");
+    return;
+  }
   console.log("Clearing old data…");
   await db.$transaction([
     db.notification.deleteMany(),

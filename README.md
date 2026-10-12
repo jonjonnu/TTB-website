@@ -51,11 +51,10 @@ Sample logins (from the seed):
 ## Put it online (Vercel)
 
 1. Sign in at vercel.com with GitHub and **Import** this repository.
-2. In the project, open **Storage → Create → Neon (Postgres)** and connect it; this sets `DATABASE_URL`.
-3. In **Settings → Environment Variables** add `AUTH_SECRET` (any long random text), `OTP_PROVIDER=mock`, `PAYMENT_PROVIDER=mock`, `SHOW_TEST_OTP=true`.
-4. Deploy. The build applies the database tables automatically (`vercel-build`).
-5. Load sample data once: run `npm run db:seed` locally with `DATABASE_URL` pointing at the Neon database.
-6. Later, add the domain (e.g. `ttb.songsmai1938.com`) under **Settings → Domains**.
+2. Before the first deploy, open **Storage → Create → Neon (Postgres)** and connect it; this sets `DATABASE_URL`.
+3. In **Settings → Environment Variables** add `AUTH_SECRET` (any random text, 16+ characters) and `SHOW_TEST_OTP=true`. SMS and payment default to the mock providers.
+4. Deploy. The build creates the database tables and, if the database is empty, loads the sample data (`vercel-build`). It never overwrites a database that already has data.
+5. Later, add the domain (e.g. `ttb.songsmai1938.com`) under **Settings → Domains**.
 
 ## Code map
 
