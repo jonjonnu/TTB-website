@@ -1,0 +1,310 @@
+// TTB employee uniform portal data model.
+// Money is stored in whole Thai baht (Int).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum OtpChannel {
+  SMS
+  EMAIL
+}
+
+enum OtpPurpose {
+  REGISTER
+  RESET_PASSWORD
+}
+
+enum DeliveryMethod {
+  BRANCH
+  HOME
+}
+
+enum OrderStatus {
+  PLACED // สั่งคำสั่งซื้อแล้ว
+  ROUND_CLOSED // ปิดรอบสั่งซื้อ
+  REVIEWING // ตรวจสอบคำสั่งซื้อ
+  PRODUCING // กำลังตัดเย็บ
+  SHIPPED // จัดส่งถึงสาขา / ที่บ้าน
+  DELIVERED // ได้รับสินค้าแล้ว
+  CANCELLED
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  PAID
+  REFUND_DUE
+}
+
+enum PaymentMethod {
+  PROMPTPAY
+  CARD
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+}
+
+enum ExtensionScope {
+  ALL
+  DEPARTMENT
+}
+
+model Branch {
+  id        String     @id @default(cuid())
+  code      String     @unique
+  name      String
+  region    String
+  employees Employee[]
+  orders    Order[]
+}
+
+// Employees are loaded by HR (CSV import). Registering = claiming a row by
+// employee code, verifying the phone/email on file with an OTP, and setting a password.
+model Employee {
+  id            String    @id @default(cuid())
+  employeeCode  String    @unique
+  firstName     String
+  lastName      String
+  gender        Gender
+  department    String
+  subDepartment String?
+  position      String
+  managerName   String?
+  email         String?
+  phone         String?
+  branchId      String?
+  branch        Branch?   @relation(fields: [branchId], references: [id])
+  homeAddress   String?
+  passwordHash  String?
+  registeredAt  DateTime?
+  notifyEmail   Boolean   @default(true)
+  notifySms     Boolean   @default(true)
+  notifyLine    Boolean   @default(false)
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  otpCodes      OtpCode[]
+  orders        Order[]
+  cartItems     CartItem[]
+  notifications Notification[]
+}
+
+model OtpCode {
+  id          String     @id @default(cuid())
+  employeeId  String
+  employee    Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  purpose     OtpPurpose
+  channel     OtpChannel
+  codeHash    String
+  // Password chosen on the sign-up form, held until the code is verified.
+  pendingPasswordHash String?
+  attempts    Int        @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([employeeId, purpose])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  description String?
+  imageUrl    String?
+  price       Int // price per piece for anything beyond the free entitlement
+  sizes       String[]
+  lengths     String[] // e.g. สั้น / ปกติ / ยาว; empty if not applicable
+  // Optional link to the matching product in the Songsmai Shopify store.
+  shopifyProductId String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  rules      EntitlementRule[]
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+}
+
+// "Employees matching these filters get <quantity> of <product> free each round."
+// A null filter means "any".
+model EntitlementRule {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  gender     Gender?
+  department String?
+  position   String?
+  quantity   Int
+  createdAt  DateTime @default(now())
+}
+
+model OrderRound {
+  id                String    @id @default(cuid())
+  year              Int
+  roundNumber       Int
+  opensAt           DateTime
+  closesAt          DateTime // current close time for everyone (moves when extended for all)
+  originalClosesAt  DateTime
+  deliveryDays      Int       @default(45) // days after close until uniforms reach branches
+  homeDeliveryFee   Int       @default(150)
+  allowEdits        Boolean   @default(true)
+  closedEarlyAt     DateTime?
+  createdAt         DateTime  @default(now())
+
+  extensions RoundExtension[]
+  orders     Order[]
+  cartItems  CartItem[]
+
+  @@unique([year, roundNumber])
+}
+
+model RoundExtension {
+  id               String         @id @default(cuid())
+  roundId          String
+  round            OrderRound     @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  scope            ExtensionScope @default(ALL)
+  department       String?
+  previousClosesAt DateTime
+  newClosesAt      DateTime
+  reason           String
+  createdBy        String
+  createdAt        DateTime       @default(now())
+}
+
+// Employee's in-progress selection for a round, before checkout.
+model CartItem {
+  id         String     @id @default(cuid())
+  employeeId String
+  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  roundId    String
+  round      OrderRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size       String
+  length     String?
+  quantity   Int
+  note       String?
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([employeeId, roundId, productId])
+}
+
+model Order {
+  id             String         @id @default(cuid())
+  orderNumber    String         @unique
+  employeeId     String
+  employee       Employee       @relation(fields: [employeeId], references: [id])
+  roundId        String
+  round          OrderRound     @relation(fields: [roundId], references: [id])
+  status         OrderStatus    @default(PLACED)
+  deliveryMethod DeliveryMethod @default(BRANCH)
+  branchId       String?
+  branch         Branch?        @relation(fields: [branchId], references: [id])
+  homeAddress    String?
+  extrasTotal    Int            @default(0)
+  deliveryFee    Int            @default(0)
+  total          Int            @default(0)
+  amountPaid     Int            @default(0)
+  paymentStatus  PaymentStatus  @default(NOT_REQUIRED)
+  paymentMethod  PaymentMethod?
+  editCount      Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  items    OrderItem[]
+  events   OrderEvent[]
+  payments Payment[]
+
+  @@unique([employeeId, roundId])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  size        String
+  length      String?
+  quantity    Int
+  entitledQty Int // pieces covered by entitlement
+  extraQty    Int // pieces the employee pays for
+  unitPrice   Int
+  note        String?
+}
+
+model OrderEvent {
+  id        String       @id @default(cuid())
+  orderId   String
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus?
+  message   String
+  createdAt DateTime     @default(now())
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount      Int
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  provider    String
+  providerRef String?
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind       String // ORDER_CONFIRMED, ORDER_EDITED, PAYMENT, STATUS, EXTENSION, REMINDER, ACCOUNT
+  title      String
+  body       String
+  href       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([employeeId, createdAt])
+}
+
+// Every email/SMS the app tried to send. With mock providers this is the only place they go.
+model OutboundMessage {
+  id        String   @id @default(cuid())
+  channel   String // SMS, EMAIL, LINE
+  to        String
+  subject   String?
+  body      String
+  provider  String
+  createdAt DateTime @default(now())
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         AdminRole @default(ADMIN)
+  createdAt    DateTime  @default(now())
+}
+
+model Setting {
+  key   String @id
+  value String
+}

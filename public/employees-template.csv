@@ -1,0 +1,2 @@
+﻿employee_code,first_name,last_name,gender,department,sub_department,position,manager,email,phone,branch_code
+1999001,ทดสอบ,ตัวอย่าง,F,สาขา,บริการลูกค้า,เจ้าหน้าที่บริการลูกค้า,วรรณา ก.,test1@example.com,0810000001,BKK01
