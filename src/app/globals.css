@@ -1,24 +1,28 @@
 @import "tailwindcss";
 
+/* Songsmai brand colors (songsmai1938.com): beige background, deep navy, red for sale/alerts. */
 @theme {
-  --font-sans: "IBM Plex Sans Thai", "IBM Plex Sans", system-ui, sans-serif;
-  --color-navy: #0b3a7e;
-  --color-navy-dark: #082c60;
-  --color-navy-50: #eef3fb;
-  --color-navy-100: #dbe5f5;
-  --color-accent: #f08a24;
-  --color-accent-50: #fff4e8;
-  --color-ink: #111827;
-  --color-muted: #6b7280;
-  --color-line: #e5e7eb;
-  --color-canvas: #f4f6fa;
+  --font-sans: "Kanit", "Barlow", system-ui, sans-serif;
+  --font-latin: "Barlow", "Kanit", system-ui, sans-serif;
+  --color-navy: #091a32;
+  --color-navy-dark: #050f1f;
+  --color-navy-50: #eef0f4;
+  --color-navy-100: #dde2ea;
+  --color-accent: #9a5b13;
+  --color-accent-50: #f6eedf;
+  --color-ink: #222222;
+  --color-muted: #6f6a60;
+  --color-line: #e2dccf;
+  --color-canvas: #eae5da;
+  --color-cream: #f7f4ee;
+  --color-sand: #e3dccd;
   --color-ok: #1f7a4d;
-  --color-ok-50: #e8f6ee;
-  --color-warn: #b45309;
-  --color-warn-50: #fff4e5;
-  --color-bad: #c62828;
+  --color-ok-50: #e6f3ea;
+  --color-warn: #9a5b13;
+  --color-warn-50: #f6eedf;
+  --color-bad: #e84e4e;
   --color-bad-50: #fdecec;
-  --color-sidebar: #0f172a;
+  --color-sidebar: #091a32;
 }
 
 html,
@@ -29,7 +33,13 @@ body {
 
 body {
   font-family: var(--font-sans);
+  font-weight: 300;
   -webkit-font-smoothing: antialiased;
+}
+
+b,
+strong {
+  font-weight: 500;
 }
 
 input,

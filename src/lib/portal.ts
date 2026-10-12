@@ -1,120 +1,139 @@
-// Employee-side domain logic: current round, entitlements, cart, checkout.
+// Employee-side domain logic: which welfare round applies, benefit mode, catalogs, carts.
 import { db } from "@/lib/db";
-import { entitlementsFor, orderTotals, priceLines } from "@/lib/entitlements";
+import { entitlementsFor, orderTotals, priceAll, priceFixed, yearsOfService, type BenefitMode } from "@/lib/entitlements";
 import { deliveryDueAt, effectiveCloseAt, roundPhase } from "@/lib/rounds";
-import type { Employee, OrderRound, RoundExtension } from "@prisma/client";
+import type { Employee, OrderRound, Prisma, RoundExtension, RoundPolicy } from "@prisma/client";
+
+export type RoundWithRules = OrderRound & { extensions: RoundExtension[]; policies: RoundPolicy[] };
 
 export type RoundView = {
-  round: OrderRound & { extensions: RoundExtension[] };
+  round: RoundWithRules;
   closeAt: Date;
   phase: "UPCOMING" | "OPEN" | "CLOSED";
   deliveryDue: Date;
   extended: boolean;
 };
 
-/** The round employees should see: the open one, else the next upcoming, else the latest. */
-export async function currentRound(department?: string | null): Promise<RoundView | null> {
+export function viewOf(round: RoundWithRules, emp?: Pick<Employee, "id" | "department"> | null, now = new Date()): RoundView {
+  const closeAt = effectiveCloseAt(round, round.extensions, emp ?? undefined);
+  return {
+    round,
+    closeAt,
+    phase: roundPhase(round, closeAt, now),
+    deliveryDue: deliveryDueAt(closeAt, round.deliveryDays),
+    extended: closeAt.getTime() !== round.originalClosesAt.getTime() && !round.closedEarlyAt,
+  };
+}
+
+const roundInclude = { extensions: true, policies: true } satisfies Prisma.OrderRoundInclude;
+
+/**
+ * The welfare round this employee should see: an open New Joiners round they were picked for,
+ * else the open Big Lot, else the next upcoming one, else the most recent.
+ * Without an employee (login page, admin) only Big Lot rounds are considered.
+ */
+export async function welfareRoundFor(emp?: Pick<Employee, "id" | "department"> | null): Promise<RoundView | null> {
   const rounds = await db.orderRound.findMany({
-    include: { extensions: true },
-    orderBy: [{ opensAt: "desc" }],
-    take: 6,
+    where: emp
+      ? { OR: [{ type: "BIG_LOT" }, { type: "NEW_JOINERS", members: { some: { employeeId: emp.id } } }] }
+      : { type: "BIG_LOT" },
+    include: roundInclude,
+    orderBy: { opensAt: "desc" },
+    take: 12,
   });
   if (rounds.length === 0) return null;
-  const now = new Date();
-  const views = rounds.map((round) => {
-    const closeAt = effectiveCloseAt(round, round.extensions, department);
-    return {
-      round,
-      closeAt,
-      phase: roundPhase(round, closeAt, now),
-      deliveryDue: deliveryDueAt(closeAt, round.deliveryDays),
-      extended: closeAt.getTime() !== round.originalClosesAt.getTime() && !round.closedEarlyAt,
-    };
-  });
+  const views = rounds.map((r) => viewOf(r, emp));
+  const open = views.filter((v) => v.phase === "OPEN");
   return (
-    views.find((v) => v.phase === "OPEN") ??
+    open.find((v) => v.round.type === "NEW_JOINERS") ??
+    open[0] ??
     [...views].reverse().find((v) => v.phase === "UPCOMING") ??
     views[0]
   );
 }
 
-export async function employeeEntitlements(emp: Pick<Employee, "gender" | "department" | "position">) {
-  const rules = await db.entitlementRule.findMany();
-  return entitlementsFor(rules, emp);
+/** Latest Big Lot, for admin screens. */
+export async function latestBigLot() {
+  const r = await db.orderRound.findFirst({ where: { type: "BIG_LOT" }, include: roundInclude, orderBy: { opensAt: "desc" } });
+  return r ? viewOf(r) : null;
 }
 
-/** Products this employee is entitled to, with what's in their cart/order for the round. */
-export async function catalogFor(emp: Employee, roundId: string | null) {
+export type Benefit = { mode: BenefitMode; credit: number };
+
+/** Department policy for a round. The round's credit switch turns credit off for everyone. */
+export function benefitFor(round: RoundWithRules, department: string): Benefit {
+  const p = round.policies.find((x) => x.department === department);
+  if (!p || p.mode === "FIXED" || !round.creditEnabled) return { mode: "FIXED", credit: 0 };
+  return { mode: "CREDIT", credit: p.creditAmount };
+}
+
+export async function employeeEntitlements(emp: Pick<Employee, "gender" | "department" | "position" | "startDate">, at = new Date()) {
+  const rules = await db.entitlementRule.findMany();
+  return entitlementsFor(rules, { ...emp, years: yearsOfService(emp.startDate, at) });
+}
+
+/** Products shown on the welfare home page, with what's in the cart / order. */
+export async function welfareCatalog(emp: Employee, view: RoundView | null) {
+  const roundId = view?.round.id ?? null;
+  const benefit = view ? benefitFor(view.round, emp.department) : ({ mode: "FIXED", credit: 0 } as Benefit);
   const [entitled, products, cart, order] = await Promise.all([
-    employeeEntitlements(emp),
+    employeeEntitlements(emp, view?.round.opensAt),
     db.product.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
-    roundId ? db.cartItem.findMany({ where: { employeeId: emp.id, roundId } }) : Promise.resolve([]),
+    roundId ? db.cartItem.findMany({ where: { employeeId: emp.id, kind: "WELFARE", roundId } }) : Promise.resolve([]),
     roundId
       ? db.order.findUnique({ where: { employeeId_roundId: { employeeId: emp.id, roundId } }, include: { items: true } })
       : Promise.resolve(null),
   ]);
   const cartBy = new Map(cart.map((c) => [c.productId, c]));
+  const visible =
+    benefit.mode === "CREDIT"
+      ? products.filter((p) => p.creditAllowed && (p.departments.length === 0 || p.departments.includes(emp.department)))
+      : products.filter((p) => entitled.has(p.id));
   return {
+    benefit,
     order,
     cartCount: cart.length,
-    entitledProducts: products
-      .filter((p) => entitled.has(p.id))
-      .map((p) => ({ product: p, entitled: entitled.get(p.id)!, cart: cartBy.get(p.id) ?? null })),
-    extraProducts: products
-      .filter((p) => !entitled.has(p.id))
-      .map((p) => ({ product: p, entitled: 0, cart: cartBy.get(p.id) ?? null })),
     entitled,
+    items: visible.map((p) => ({ product: p, entitled: entitled.get(p.id) ?? 0, cart: cartBy.get(p.id) ?? null })),
   };
 }
 
-export async function pricedCart(emp: Employee, roundId: string) {
+export async function pricedWelfareCart(emp: Employee, view: RoundView) {
+  const benefit = benefitFor(view.round, emp.department);
   const [entitled, cart] = await Promise.all([
-    employeeEntitlements(emp),
+    employeeEntitlements(emp, view.round.opensAt),
     db.cartItem.findMany({
-      where: { employeeId: emp.id, roundId },
+      where: { employeeId: emp.id, kind: "WELFARE", roundId: view.round.id },
       include: { product: true },
       orderBy: { product: { sortOrder: "asc" } },
     }),
   ]);
-  const priced = priceLines(
-    cart.map((c) => ({ productId: c.productId, quantity: c.quantity, unitPrice: c.product.price })),
-    entitled,
-  );
-  return { entitled, lines: cart.map((c, i) => ({ ...c, ...priced[i] })) };
+  const input = cart.map((c) => ({ productId: c.productId, quantity: c.quantity, unitPrice: c.product.price }));
+  const priced = benefit.mode === "CREDIT" ? priceAll(input) : priceFixed(input, entitled);
+  const lines = cart.map((c, i) => ({ ...c, ...priced[i] }));
+  return { benefit, entitled, lines, totals: orderTotals(priced, { credit: benefit.credit }) };
 }
 
-export function computeTotals(lines: { lineTotal: number; entitledQty: number; extraQty: number }[], deliveryFee: number) {
-  const t = orderTotals(lines as Parameters<typeof orderTotals>[0], deliveryFee);
-  return { ...t, freePieces: lines.reduce((s, l) => s + l.entitledQty, 0), extraPieces: lines.reduce((s, l) => s + l.extraQty, 0) };
+export async function pricedPersonalCart(emp: Employee, deliveryFee = 0) {
+  const cart = await db.cartItem.findMany({
+    where: { employeeId: emp.id, kind: "PERSONAL" },
+    include: { product: true },
+    orderBy: { updatedAt: "asc" },
+  });
+  const priced = priceAll(cart.map((c) => ({ productId: c.productId, quantity: c.quantity, unitPrice: c.product.price })));
+  return { lines: cart.map((c, i) => ({ ...c, ...priced[i] })), totals: orderTotals(priced, { deliveryFee }) };
 }
 
-export function canOrder(view: RoundView | null, emp: Employee, hasOrder: boolean) {
+export function canOrderWelfare(view: RoundView | null, hasOrder: boolean) {
   if (!view || view.phase !== "OPEN") return false;
   return hasOrder ? view.round.allowEdits : true;
 }
 
-export async function nextOrderNumber(round: OrderRound) {
-  const count = await db.order.count({ where: { roundId: round.id } });
-  return `TTB-${round.year}-${round.roundNumber}-${String(count + 1).padStart(4, "0")}`;
+export async function nextOrderNumber(kind: "WELFARE" | "PERSONAL", round?: OrderRound | null) {
+  const prefix =
+    kind === "PERSONAL" ? "PO-" : `${round!.type === "BIG_LOT" ? "BL" : "NJ"}${String(round!.year).slice(-2)}-`;
+  const count = await db.order.count({ where: { orderNumber: { startsWith: prefix } } });
+  return `${prefix}${String(count + 1).padStart(4, "0")}`;
 }
 
-export const STATUS_STEPS = [
-  { status: "PLACED", label: "สั่งคำสั่งซื้อแล้ว" },
-  { status: "ROUND_CLOSED", label: "ปิดรอบสั่งซื้อ" },
-  { status: "REVIEWING", label: "ตรวจสอบคำสั่งซื้อ" },
-  { status: "PRODUCING", label: "กำลังตัดเย็บ" },
-  { status: "SHIPPED", label: "จัดส่งแล้ว" },
-  { status: "DELIVERED", label: "ได้รับสินค้าแล้ว" },
-] as const;
-
-export const STATUS_LABEL: Record<string, string> = {
-  ...Object.fromEntries(STATUS_STEPS.map((s) => [s.status, s.label])),
-  CANCELLED: "ยกเลิก",
-};
-
-export const PAYMENT_LABEL: Record<string, string> = {
-  NOT_REQUIRED: "ไม่มีค่าใช้จ่าย",
-  PENDING: "รอชำระเงิน",
-  PAID: "ชำระแล้ว",
-  REFUND_DUE: "รอคืนเงินส่วนต่าง",
-};
+export * from "@/lib/portal-labels";

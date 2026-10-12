@@ -48,9 +48,9 @@ export function OtpStartForm({
       </div>
 
       {found && (
-        <div className="rounded-lg bg-gray-50 px-3 py-2.5 text-sm">
+        <div className="rounded-lg bg-cream px-3 py-2.5 text-sm">
           <p className="text-xs text-muted">พบข้อมูลพนักงาน</p>
-          <p className="font-semibold">{found.name}</p>
+          <p className="font-medium">{found.name}</p>
           <p className="text-xs text-muted">{found.detail}</p>
           {blocked && (
             <p className="mt-1 text-xs text-bad">
@@ -89,7 +89,7 @@ export function OtpStartForm({
                   className="accent-navy"
                 />
                 <span>
-                  <span className="block text-sm font-semibold">{label}</span>
+                  <span className="block text-sm font-medium">{label}</span>
                   <span className="block text-xs text-muted">{hint}</span>
                 </span>
               </label>

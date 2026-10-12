@@ -10,7 +10,6 @@ import { extendRound } from "../../actions";
 export function ExtendForm(props: {
   roundId: string;
   currentClose: string;
-  originalClose: string;
   opensAt: string;
   deliveryDays: number;
   departments: string[];
@@ -52,20 +51,20 @@ export function ExtendForm(props: {
         <Input name="reason" defaultValue="ขยายเวลาตามคำขอฝ่ายบุคคล" required />
       </div>
       {valid && (
-        <div className="grid gap-2 rounded-lg bg-gray-50 p-3 text-sm md:grid-cols-3">
+        <div className="grid gap-2 rounded-lg bg-cream p-3 text-sm md:grid-cols-3">
           <div>
             <p className="text-xs text-muted">เปิดรับ</p>
-            <p className="font-semibold">
+            <p className="font-medium">
               {thShortDate(new Date(props.opensAt))} – {thDate(newClose)}
             </p>
           </div>
           <div>
-            <p className="text-xs text-muted">ปิดตรวจสอบ</p>
-            <p className="font-semibold">เริ่ม {thDate(new Date(newClose.getTime() + 60_000))}</p>
+            <p className="text-xs text-muted">เริ่มผลิต</p>
+            <p className="font-medium">เริ่ม {thDate(new Date(newClose.getTime() + 60_000))}</p>
           </div>
           <div>
-            <p className="text-xs text-muted">ส่งถึงสาขา ({props.deliveryDays} วัน)</p>
-            <p className="font-semibold">
+            <p className="text-xs text-muted">ส่งถึงที่ทำงาน ({props.deliveryDays} วัน)</p>
+            <p className="font-medium">
               ภายใน {thDate(due)} <span className="text-xs font-normal text-accent">(เดิม {thShortDate(oldDue)})</span>
             </p>
           </div>

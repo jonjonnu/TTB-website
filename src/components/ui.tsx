@@ -15,7 +15,7 @@ const variants: Record<Variant, string> = {
 };
 
 const base =
-  "inline-flex items-center justify-center gap-2 rounded-lg px-4 h-11 text-sm font-semibold transition-colors disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center gap-2 rounded-lg px-4 h-11 text-sm font-medium transition-colors disabled:cursor-not-allowed";
 
 export function Button({ variant = "primary", className, ...props }: ComponentProps<"button"> & { variant?: Variant }) {
   return <button className={cx(base, variants[variant], className)} {...props} />;
@@ -30,7 +30,7 @@ export function LinkButton({
 }
 
 export function Card({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cx("rounded-xl bg-white border border-line", className)} {...props} />;
+  return <div className={cx("rounded-xl bg-white border border-line/70", className)} {...props} />;
 }
 
 type Tone = "navy" | "ok" | "warn" | "bad" | "gray" | "accent";
@@ -54,7 +54,7 @@ export function Badge({ tone = "navy", children, className }: { tone?: Tone; chi
 export function Label({ children, htmlFor, extra }: { children: ReactNode; htmlFor?: string; extra?: ReactNode }) {
   return (
     <div className="mb-1.5 flex items-center justify-between">
-      <label htmlFor={htmlFor} className="text-sm font-semibold">
+      <label htmlFor={htmlFor} className="text-sm font-medium">
         {children}
       </label>
       {extra}
@@ -63,7 +63,7 @@ export function Label({ children, htmlFor, extra }: { children: ReactNode; htmlF
 }
 
 const field =
-  "w-full rounded-lg border border-line bg-white px-3 h-11 text-sm outline-none focus:border-navy focus:ring-2 focus:ring-navy/15 disabled:bg-gray-50 disabled:text-muted";
+  "w-full rounded-lg border border-line bg-white px-3 h-11 text-sm outline-none focus:border-navy focus:ring-2 focus:ring-navy/15 disabled:bg-cream disabled:text-muted";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cx(field, className)} {...props} />;
@@ -87,9 +87,27 @@ export function Alert({ tone = "warn", children }: { tone?: "warn" | "bad" | "ok
   return <div className={cx("rounded-lg border px-3 py-2.5 text-sm", t)}>{children}</div>;
 }
 
+export function HelpBar() {
+  return (
+    <div className="flex items-center justify-between border-b border-line bg-cream px-4 py-1.5 text-[11px] text-muted">
+      <span>ช่วยเหลือ: Songsmai Call Center</span>
+      <span>
+        <a href="tel:024339881" className="text-ink">
+          02-433-9881
+        </a>{" "}
+        · LINE{" "}
+        <a href="https://line.me/R/ti/p/@songsmai" className="text-ink">
+          @songsmai
+        </a>
+      </span>
+    </div>
+  );
+}
+
 export function TopBar({ title, back, right }: { title: string; back?: string; right?: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-line bg-white px-3">
+    <header className="sticky top-0 z-10 border-b border-line bg-white">
+      <div className="flex h-14 items-center gap-2 px-3">
       {back && (
         <Link href={back} aria-label="ย้อนกลับ" className="grid h-9 w-9 place-items-center rounded-full hover:bg-gray-100">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -97,8 +115,10 @@ export function TopBar({ title, back, right }: { title: string; back?: string; r
           </svg>
         </Link>
       )}
-      <h1 className="flex-1 text-base font-semibold">{title}</h1>
+      <h1 className="flex-1 text-base font-medium">{title}</h1>
       {right}
+      </div>
+      <HelpBar />
     </header>
   );
 }
@@ -106,10 +126,10 @@ export function TopBar({ title, back, right }: { title: string; back?: string; r
 export function Logo({ light }: { light?: boolean }) {
   return (
     <span className="inline-flex items-center gap-2">
-      <span className={cx("rounded-md px-1.5 py-0.5 text-xs font-bold", light ? "bg-white text-navy" : "bg-navy text-white")}>
+      <span className={cx("rounded-md px-1.5 py-0.5 text-xs font-medium", light ? "bg-white text-navy" : "bg-navy text-white")}>
         TTB
       </span>
-      <span className={cx("text-sm font-semibold", light ? "text-white" : "text-ink")}>Uniform</span>
+      <span className={cx("text-sm font-medium", light ? "text-white" : "text-ink")}>Uniform</span>
     </span>
   );
 }
@@ -117,10 +137,10 @@ export function Logo({ light }: { light?: boolean }) {
 export function ProductImage({ src, alt, className }: { src?: string | null; alt: string; className?: string }) {
   if (src) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt={alt} className={cx("bg-navy-50 object-cover", className)} />;
+    return <img src={src} alt={alt} className={cx("bg-sand object-cover", className)} />;
   }
   return (
-    <div className={cx("grid place-items-center bg-[#e8edf5] text-[#9aa8bf]", className)} aria-label={alt}>
+    <div className={cx("grid place-items-center bg-sand text-[#9b9282]", className)} aria-label={alt}>
       <div className="flex flex-col items-center gap-1">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .5-2 1.5V10m0 0 9 6.5a1 1 0 0 1-.6 1.8H3.6a1 1 0 0 1-.6-1.8L12 10Z" />

@@ -5,27 +5,28 @@ It follows the mockup in the TTB project (`TTB-Employee-Web-App-Mockup.pdf`). Al
 
 ## What it does
 
+**Three kinds of orders**
+- **Big Lot**: the annual welfare round. Open 7 days, then closed for checking, then delivered to the employee's work location within 45 days.
+- **New Joiners**: a monthly round admin opens for hand-picked new staff, with the same benefits as the latest Big Lot.
+- **Personal store**: any employee can buy at full price at any time, delivered free to work or to home for a fee.
+
+**Benefits per department, set per round**
+- Branch and Wealth get **fixed items** by position, gender and years of service (e.g. a tie after 5 years).
+- Back Office gets a **฿2,000 credit** to spend on products marked "ใช้เครดิตได้". Anything over is paid by QR PromptPay, mobile banking, credit or debit card. Credit doesn't carry over.
+- One switch turns credit off for every department in a round.
+
 **Employees (phone-first, Thai)**
-- Sign up with their employee ID; a 6-digit OTP is sent to the phone or email HR has on file. Forgot-password uses the same OTP flow.
-- Home page shows their department, position, the current ordering round (open 7 days → closed for review → delivered to branch within 45 days) and only the uniforms they're entitled to.
-- Pick size, length and quantity per item. Anything beyond the free quota, or items outside their entitlement, is charged.
-- Checkout: pick up at a branch (free) or deliver to home (extra fee). Pay extras by PromptPay QR or card.
-- Edit the order until the round closes (pay the difference, or a refund is flagged for Songsmai).
-- Order status in 6 steps, order history, notifications (in-app + email/SMS), account page with an entitlement table.
+- Sign up with their employee ID and a 6-digit OTP sent to the phone or email HR has on file. Forgot-password uses the same flow.
+- The home page shows department, position, years of service, the round timeline, and either remaining credit or their fixed items.
+- Pick size, length and quantity; edit the order until the round closes (pay the difference, or a refund is flagged).
+- Status in 5 steps (ยืนยัน, ปิดรอบ, อยู่ระหว่างผลิต, อยู่ระหว่างจัดส่ง, จัดส่งสำเร็จ) with J&T tracking numbers, notifications, size guide, and exchange requests (wrong size, defect, wrong item).
+- Songsmai Call Center 02-433-9881 and LINE @songsmai on every page.
 
-**Admin (desktop)** at `/admin`
-- Employees and status: filter by department, sub-department, gender, position, registered, ordered; CSV export and CSV import.
-- Ordering rounds: create, edit dates, close early, remind people who haven't ordered, and **extend the deadline** (for everyone or one department) with the delivery date recalculated and employees notified.
-- Entitlement rules, products and prices, orders (bulk status updates that notify employees, production CSV), admin team with Owner/Admin roles.
-
-## Not live yet (placeholders)
-
-| Piece | Today | To go live |
-| --- | --- | --- |
-| OTP and notification SMS/email | `mock` provider: nothing is sent, messages are stored in the `OutboundMessage` table, and with `SHOW_TEST_OTP=true` the code is shown on the OTP screen | Pick SMS (e.g. ThaiBulkSMS) and email (e.g. Resend) providers and add them in `src/lib/providers/messaging.ts` |
-| Payment | `mock` provider: sample QR, a "simulate payment" button | Pick a Thai gateway (e.g. Opn/Omise, 2C2P, GB Prime Pay) and add it in `src/lib/providers/payment.ts` |
-| Product photos, prices, delivery fee, size chart | Placeholders | Edit in admin → สินค้า / รอบสั่งซื้อ |
-| LINE notifications | Toggle only | Needs a LINE Official Account |
+**Admin (desktop)** at `/admin`, for both TTB HR and Songsmai
+- Dashboard with production and shipping progress and 8 CSV reports (usage, extras, by department, by location, production, shipping, outstanding, stock).
+- Employees: filters (department, work location, years of service, status…), HR CSV import, bulk extend/notify/status, tracking-number CSV import.
+- Rounds: benefit mode and credit per department, credit switch, packing mode (per person / department / location), extend the deadline for everyone, one department or chosen people.
+- New Joiners, entitlement rules, products (price, stock, credit and personal-sale flags), orders and exchanges, admin team with organisation and roles.
 
 ## Run it on your computer
 
@@ -40,7 +41,8 @@ npm run dev                   # http://localhost:3000
 ```
 
 Sample logins (from the seed):
-- Employee: `1100231` / `ttb12345`
+- Back Office employee (credit): `1100231` / `ttb12345`
+- Branch employee (fixed items): `1100232` / `ttb12345`
 - Try sign-up with employee ID `1100999` (the OTP is shown on screen in test mode)
 - Admin: `owner@example.com` / `admin12345`
 

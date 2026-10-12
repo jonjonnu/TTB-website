@@ -1,174 +1,127 @@
-import Link from "next/link";
 import { db } from "@/lib/db";
-import { thDate } from "@/lib/format";
-import { currentRound } from "@/lib/portal";
-import { roundLabel } from "@/lib/rounds";
-import { Badge, Card, Input, Select } from "@/components/ui";
-import { importEmployees } from "../actions";
-import { employeeWhere, type EmployeeFilters } from "../lib";
-import { ActionForm } from "./form-bits";
+import { baht, thShortDate } from "@/lib/format";
+import { Card, Select } from "@/components/ui";
+import { eligibleWhere, selectedRound } from "../lib";
 
-export default async function EmployeesPage({ searchParams }: { searchParams: Promise<EmployeeFilters & { page?: string }> }) {
-  const f = await searchParams;
-  const view = await currentRound();
-  const roundId = view?.round.id ?? null;
-  const page = Math.max(1, Number(f.page ?? 1));
-  const where = employeeWhere(f, roundId);
+const REPORTS = [
+  ["usage", "รายงานการใช้สิทธิ์"],
+  ["extras", "รายงานการสั่งซื้อเพิ่มเติม"],
+  ["department", "รายงานแยกหน่วยงาน"],
+  ["location", "รายงานแยกสาขา"],
+  ["production", "รายงานการผลิต"],
+  ["shipping", "รายงานการจัดส่ง"],
+  ["outstanding", "รายงานสินค้าตกค้าง"],
+  ["stock", "รายงานสินค้าคงเหลือ"],
+] as const;
 
-  const [total, registered, ordered, filtered, employees, departments, subDepartments, positions] = await Promise.all([
-    db.employee.count({ where: { active: true } }),
-    db.employee.count({ where: { active: true, registeredAt: { not: null } } }),
-    roundId ? db.order.count({ where: { roundId } }) : Promise.resolve(0),
-    db.employee.count({ where }),
-    db.employee.findMany({
-      where,
-      include: { orders: roundId ? { where: { roundId }, select: { id: true, status: true } } : false, branch: true },
-      orderBy: { employeeCode: "asc" },
-      skip: (page - 1) * 50,
-      take: 50,
-    }),
-    db.employee.findMany({ distinct: ["department"], select: { department: true }, orderBy: { department: "asc" } }),
-    db.employee.findMany({ distinct: ["subDepartment"], select: { subDepartment: true }, orderBy: { subDepartment: "asc" } }),
-    db.employee.findMany({ distinct: ["position"], select: { position: true }, orderBy: { position: "asc" } }),
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ round?: string }> }) {
+  const { round: roundParam } = await searchParams;
+  const { rounds, round, view } = await selectedRound(roundParam);
+  if (!round || !view) return <p className="text-muted">ยังไม่มีรอบสั่งซื้อ สร้างได้ที่หน้า &ldquo;รอบสั่งซื้อและเครดิต&rdquo;</p>;
+
+  const since = round.opensAt;
+  const [eligible, used, byStatus, welfareExtras, personal, paid] = await Promise.all([
+    db.employee.count({ where: eligibleWhere(round) }),
+    db.order.count({ where: { roundId: round.id } }),
+    db.order.groupBy({ by: ["status"], where: { roundId: round.id }, _count: true }),
+    db.order.count({ where: { roundId: round.id, total: { gt: 0 } } }),
+    db.order.count({ where: { kind: "PERSONAL", createdAt: { gte: since } } }),
+    db.order.aggregate({ where: { OR: [{ roundId: round.id }, { kind: "PERSONAL", createdAt: { gte: since } }] }, _sum: { amountPaid: true } }),
   ]);
-  const qs = new URLSearchParams(Object.entries(f).filter(([k, v]) => v && k !== "page") as [string, string][]).toString();
+  const n = (s: string) => byStatus.find((b) => b.status === s)?._count ?? 0;
+  const waitingProduction = n("PLACED") + n("ROUND_CLOSED");
+  const producing = n("PRODUCING");
+  const produced = n("SHIPPING") + n("DELIVERED");
+  const waitingShip = waitingProduction + producing;
+  const pct = (x: number) => (used ? (x / used) * 100 : 0);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-bold">พนักงานและสถานะ</h1>
-        <a href={`/admin/export/employees?${qs}`} className="rounded-lg border border-navy/30 bg-white px-3 py-2 text-sm font-semibold text-navy">
-          ดาวน์โหลด CSV ({filtered})
-        </a>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="พนักงานทั้งหมด" value={total} />
-        <Stat label="ลงทะเบียนแล้ว" value={registered} sub={`${total ? Math.round((registered / total) * 100) : 0}%`} />
-        <Stat label="ยังไม่ลงทะเบียน" value={total - registered} />
-        <Stat label={view ? `สั่งแล้ว · ${roundLabel(view.round)}` : "สั่งแล้ว"} value={ordered} />
-      </div>
-
-      <Card className="p-3">
-        <form className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-8">
-          <Input name="q" defaultValue={f.q} placeholder="ค้นหารหัส / ชื่อ" className="col-span-2" />
-          <Select name="department" defaultValue={f.department ?? ""}>
-            <option value="">ทุกแผนก</option>
-            {departments.map((d) => (
-              <option key={d.department}>{d.department}</option>
-            ))}
-          </Select>
-          <Select name="subDepartment" defaultValue={f.subDepartment ?? ""}>
-            <option value="">ทุกแผนกย่อย</option>
-            {subDepartments.filter((d) => d.subDepartment).map((d) => (
-              <option key={d.subDepartment}>{d.subDepartment}</option>
-            ))}
-          </Select>
-          <Select name="gender" defaultValue={f.gender ?? ""}>
-            <option value="">ทุกเพศ</option>
-            <option value="FEMALE">หญิง</option>
-            <option value="MALE">ชาย</option>
-          </Select>
-          <Select name="position" defaultValue={f.position ?? ""}>
-            <option value="">ทุกตำแหน่ง</option>
-            {positions.map((d) => (
-              <option key={d.position}>{d.position}</option>
-            ))}
-          </Select>
-          <Select name="registered" defaultValue={f.registered ?? ""}>
-            <option value="">การลงทะเบียน</option>
-            <option value="yes">ลงทะเบียนแล้ว</option>
-            <option value="no">ยังไม่ลงทะเบียน</option>
-          </Select>
-          <Select name="ordered" defaultValue={f.ordered ?? ""}>
-            <option value="">การสั่งซื้อรอบนี้</option>
-            <option value="yes">สั่งแล้ว</option>
-            <option value="no">ยังไม่สั่ง</option>
-          </Select>
-          <div className="col-span-2 flex gap-2 md:col-span-4 lg:col-span-8">
-            <button className="rounded-lg bg-navy px-4 py-2 text-sm font-semibold text-white">กรอง</button>
-            <Link href="/admin" className="rounded-lg px-4 py-2 text-sm text-muted">
-              ล้างตัวกรอง
-            </Link>
-            <span className="ml-auto self-center text-sm text-muted">พบ {filtered} คน</span>
-          </div>
-        </form>
-      </Card>
-
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[900px] text-sm">
-          <thead className="bg-gray-50 text-left text-xs text-muted">
-            <tr>
-              {["รหัส", "ชื่อ", "แผนก", "ตำแหน่ง", "เพศ", "สาขา", "ลงทะเบียน", "รอบนี้"].map((h) => (
-                <th key={h} className="px-3 py-2 font-medium">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {employees.map((e) => {
-              const o = e.orders?.[0];
-              return (
-                <tr key={e.id} className="border-t border-line">
-                  <td className="px-3 py-2 font-mono text-xs">{e.employeeCode}</td>
-                  <td className="px-3 py-2">
-                    {e.firstName} {e.lastName}
-                  </td>
-                  <td className="px-3 py-2">
-                    {e.department}
-                    {e.subDepartment && <span className="block text-xs text-muted">{e.subDepartment}</span>}
-                  </td>
-                  <td className="px-3 py-2">{e.position}</td>
-                  <td className="px-3 py-2">{e.gender === "FEMALE" ? "หญิง" : "ชาย"}</td>
-                  <td className="px-3 py-2">{e.branch?.name ?? "-"}</td>
-                  <td className="px-3 py-2">
-                    {e.registeredAt ? <Badge tone="ok">{thDate(e.registeredAt)}</Badge> : <Badge tone="gray">ยังไม่ลงทะเบียน</Badge>}
-                  </td>
-                  <td className="px-3 py-2">
-                    {o ? (
-                      <Link href={`/admin/orders/${o.id}`}>
-                        <Badge tone="navy">สั่งแล้ว</Badge>
-                      </Link>
-                    ) : (
-                      <Badge tone="accent">ยังไม่สั่ง</Badge>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div className="flex justify-between border-t border-line px-3 py-2 text-sm">
-          {page > 1 ? <Link href={`/admin?${qs}&page=${page - 1}`} className="text-navy">‹ ก่อนหน้า</Link> : <span />}
-          {page * 50 < filtered ? <Link href={`/admin?${qs}&page=${page + 1}`} className="text-navy">ถัดไป ›</Link> : <span />}
+    <div className="max-w-6xl space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-medium">แดชบอร์ด</h1>
+          <p className="text-sm text-muted">
+            {round.name} · เปิดรับ {thShortDate(round.opensAt)}–{thShortDate(view.closeAt)}
+          </p>
         </div>
-      </Card>
+        <form className="flex gap-2">
+          <Select name="round" defaultValue={round.id} className="w-auto">
+            {rounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </Select>
+          <button className="rounded-lg bg-navy px-3 text-sm text-white">ดู</button>
+        </form>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <Stat label="ผู้มีสิทธิ์" value={eligible.toLocaleString("th-TH")} sub={round.type === "NEW_JOINERS" ? "พนักงานใหม่ที่เลือก" : "ทุกแผนกในรอบนี้"} />
+        <Stat label="ใช้สิทธิ์แล้ว" value={used.toLocaleString("th-TH")} sub={`${eligible ? Math.round((used / eligible) * 100) : 0}%`} />
+        <Stat label="ยังไม่ใช้สิทธิ์" value={(eligible - used).toLocaleString("th-TH")} sub="ส่งแจ้งเตือนได้จากหน้าพนักงาน" />
+        <Stat label="สั่งซื้อเพิ่มเติม" value={(welfareExtras + personal).toLocaleString("th-TH")} sub="ส่วนเกินเครดิต + Personal" />
+        <Stat label="ยอดชำระส่วนเกิน" value={baht(paid._sum.amountPaid ?? 0)} sub="QR / โมบายแบงก์กิ้ง / บัตร" />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="space-y-3 p-4">
+          <h2 className="font-medium">สถานะการผลิต</h2>
+          <Bar label="รอผลิต" value={waitingProduction} pct={pct(waitingProduction)} />
+          <Bar label="อยู่ระหว่างผลิต" value={producing} pct={pct(producing)} />
+          <Bar label="ผลิตเสร็จ" value={produced} pct={pct(produced)} dark />
+        </Card>
+        <Card className="space-y-3 p-4">
+          <h2 className="font-medium">สถานะการจัดส่ง</h2>
+          <Bar label="รอจัดส่ง" value={waitingShip} pct={pct(waitingShip)} />
+          <Bar label="อยู่ระหว่างจัดส่ง" value={n("SHIPPING")} pct={pct(n("SHIPPING"))} />
+          <Bar label="จัดส่งสำเร็จ" value={n("DELIVERED")} pct={pct(n("DELIVERED"))} ok />
+          <p className="text-xs text-muted">อัปเดตเลขพัสดุทีละกลุ่มได้ในหน้าพนักงานและคำสั่งซื้อ (เชื่อม J&T API ภายหลัง)</p>
+        </Card>
+      </div>
 
       <Card className="p-4">
-        <h2 className="font-semibold">นำเข้าพนักงานจาก CSV</h2>
-        <p className="mt-1 text-sm text-muted">
-          คอลัมน์: <code className="text-xs">employee_code, first_name, last_name, gender (M/F), department, sub_department, position, manager, email, phone, branch_code</code>{" "}
-          · รหัสที่มีอยู่แล้วจะถูกอัปเดต ·{" "}
-          <a href="/employees-template.csv" className="text-navy underline">
-            ดาวน์โหลดไฟล์ตัวอย่าง
-          </a>
-        </p>
-        <ActionForm action={importEmployees} submit="นำเข้า" className="mt-3">
-          <input type="file" name="file" accept=".csv,text/csv" className="text-sm" />
-        </ActionForm>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-medium">รายงาน</h2>
+          <span className="text-xs text-muted">ดาวน์โหลดเป็น CSV (เปิดใน Excel ได้)</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {REPORTS.map(([key, label]) => (
+            <a
+              key={key}
+              href={`/admin/reports/${key}?round=${round.id}`}
+              className="flex items-center justify-between rounded-lg border border-line px-3 py-2.5 text-sm hover:bg-cream"
+            >
+              {label}
+              <span aria-hidden>↓</span>
+            </a>
+          ))}
+        </div>
       </Card>
     </div>
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: number; sub?: string }) {
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <Card className="p-3">
       <p className="text-xs text-muted">{label}</p>
-      <p className="text-2xl font-bold">
-        {value.toLocaleString("th-TH")} {sub && <span className="text-sm font-normal text-muted">{sub}</span>}
-      </p>
+      <p className="font-latin text-2xl font-medium">{value}</p>
+      {sub && <p className="text-[11px] text-muted">{sub}</p>}
     </Card>
+  );
+}
+
+function Bar({ label, value, pct, dark, ok }: { label: string; value: number; pct: number; dark?: boolean; ok?: boolean }) {
+  return (
+    <div>
+      <div className="flex justify-between text-sm">
+        <span>{label}</span>
+        <span className="text-muted">{value.toLocaleString("th-TH")}</span>
+      </div>
+      <div className="mt-1 h-2 rounded-full bg-cream">
+        <div className={`h-2 rounded-full ${ok ? "bg-ok" : dark ? "bg-navy" : "bg-sand"}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }

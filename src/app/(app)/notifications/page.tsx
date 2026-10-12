@@ -7,12 +7,14 @@ import { markAllRead, savePreferences } from "../actions";
 
 const icons: Record<string, { icon: string; cls: string }> = {
   EXTENSION: { icon: "⏰", cls: "bg-accent-50" },
-  ORDER_EDITED: { icon: "✎", cls: "bg-navy-50" },
+  ORDER_EDITED: { icon: "✎", cls: "bg-cream" },
   PAYMENT: { icon: "฿", cls: "bg-ok-50" },
   ORDER_CONFIRMED: { icon: "✓", cls: "bg-ok-50" },
-  STATUS: { icon: "🚚", cls: "bg-navy-50" },
+  STATUS: { icon: "🚚", cls: "bg-cream" },
   REMINDER: { icon: "🔔", cls: "bg-accent-50" },
-  ACCOUNT: { icon: "👤", cls: "bg-gray-100" },
+  ACCOUNT: { icon: "👤", cls: "bg-cream" },
+  ROUND_OPEN: { icon: "🔔", cls: "bg-cream" },
+  EXCHANGE: { icon: "↺", cls: "bg-cream" },
 };
 
 export default async function NotificationsPage() {
@@ -26,7 +28,7 @@ export default async function NotificationsPage() {
         back="/"
         right={
           <form action={markAllRead}>
-            <button className="text-xs font-semibold text-navy">อ่านทั้งหมด</button>
+            <button className="text-xs font-medium text-navy">อ่านทั้งหมด</button>
           </form>
         }
       />
@@ -39,7 +41,7 @@ export default async function NotificationsPage() {
               <span className={cx("grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm", ic.cls)}>{ic.icon}</span>
               <div className="min-w-0 flex-1">
                 <div className="flex justify-between gap-2">
-                  <p className="text-sm font-semibold">{n.title}</p>
+                  <p className="text-sm font-medium">{n.title}</p>
                   <span className="shrink-0 text-[11px] text-muted">{thDateTime(n.createdAt)}</span>
                 </div>
                 <p className="text-xs text-muted">{n.body}</p>
@@ -56,7 +58,7 @@ export default async function NotificationsPage() {
         })}
 
         <Card className="mt-4 p-3">
-          <p className="mb-2 font-semibold">รับการแจ้งเตือนทาง</p>
+          <p className="mb-2 font-medium">รับการแจ้งเตือนทาง</p>
           <form action={savePreferences} className="divide-y divide-line text-sm">
             {(
               [
@@ -71,7 +73,7 @@ export default async function NotificationsPage() {
               </label>
             ))}
             <div className="pt-2.5">
-              <button className="text-sm font-semibold text-navy">บันทึกการตั้งค่า</button>
+              <button className="text-sm font-medium text-navy">บันทึกการตั้งค่า</button>
             </div>
           </form>
         </Card>

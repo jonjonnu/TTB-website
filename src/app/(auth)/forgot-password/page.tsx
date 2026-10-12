@@ -8,7 +8,7 @@ export default function ForgotPasswordPage() {
       <TopBar title="ลืมรหัสผ่าน" back="/login" />
       <Stepper step={1} total={2} />
       <div className="px-4 py-5">
-        <h2 className="text-xl font-bold">ตั้งรหัสผ่านใหม่</h2>
+        <h2 className="text-xl font-medium">ตั้งรหัสผ่านใหม่</h2>
         <p className="mt-1 mb-5 text-sm text-muted">กรอกรหัสพนักงานและรหัสผ่านใหม่ ระบบจะส่งรหัส OTP เพื่อยืนยันตัวตน</p>
         <OtpStartForm action={resetStart} mode="reset" />
       </div>

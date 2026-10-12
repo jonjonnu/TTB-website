@@ -63,7 +63,7 @@ export async function endAdminSession() {
 export async function currentEmployee() {
   const id = await read(EMPLOYEE_COOKIE, "employee");
   if (!id) return null;
-  const emp = await db.employee.findUnique({ where: { id }, include: { branch: true } });
+  const emp = await db.employee.findUnique({ where: { id } });
   return emp && emp.active && emp.registeredAt ? emp : null;
 }
 

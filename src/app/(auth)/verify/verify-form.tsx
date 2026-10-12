@@ -74,7 +74,7 @@ export function VerifyForm(props: {
           )}
         </svg>
       </div>
-      <h2 className="mt-4 text-xl font-bold">กรอกรหัส OTP</h2>
+      <h2 className="mt-4 text-xl font-medium">กรอกรหัส OTP</h2>
       <p className="mt-1 text-sm text-muted">
         เราส่งรหัส 6 หลักไปที่ <b className="text-ink">{props.destination}</b> แล้ว รหัสมีอายุ {props.ttlMinutes} นาที
       </p>
@@ -92,7 +92,7 @@ export function VerifyForm(props: {
             inputMode="numeric"
             autoComplete={i === 0 ? "one-time-code" : "off"}
             aria-label={`หลักที่ ${i + 1}`}
-            className="h-14 w-full rounded-lg border border-line text-center text-xl font-semibold outline-none focus:border-navy focus:ring-2 focus:ring-navy/15"
+            className="h-14 w-full rounded-lg border border-line text-center text-xl font-medium outline-none focus:border-navy focus:ring-2 focus:ring-navy/15"
             autoFocus={i === 0}
           />
         ))}
@@ -104,7 +104,7 @@ export function VerifyForm(props: {
             ไม่ได้รับรหัส? ส่งอีกครั้งได้ใน <b className="text-ink">{mm}:{ss}</b>
           </p>
         ) : (
-          <button type="button" disabled={pending} onClick={() => resend(props.channel)} className="font-semibold text-navy">
+          <button type="button" disabled={pending} onClick={() => resend(props.channel)} className="font-medium text-navy">
             ส่งรหัสอีกครั้ง
           </button>
         )}
@@ -113,14 +113,14 @@ export function VerifyForm(props: {
             type="button"
             disabled={pending || seconds > 0}
             onClick={() => resend(props.channel === "SMS" ? "EMAIL" : "SMS")}
-            className="block w-full font-semibold text-navy disabled:opacity-40"
+            className="block w-full font-medium text-navy disabled:opacity-40"
           >
             {props.channel === "SMS" ? "เปลี่ยนเป็นส่งทางอีเมล" : "เปลี่ยนเป็นส่งทาง SMS"}
           </button>
         )}
         {resendError && <p className="text-bad">{resendError}</p>}
         {props.testCode && (
-          <p className="rounded-md bg-accent-50 px-2 py-1 text-xs text-[#8a4b0f]">
+          <p className="rounded-md bg-accent-50 px-2 py-1 text-xs text-accent">
             โหมดทดสอบ (ยังไม่ส่ง SMS/อีเมลจริง) · รหัสทดสอบ: <b>{props.testCode}</b>
           </p>
         )}

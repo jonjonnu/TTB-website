@@ -7,21 +7,40 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { baht, thDateTime } from "@/lib/format";
 import { notifyEmployee } from "@/lib/notify";
-import { canOrder, computeTotals, currentRound, nextOrderNumber, pricedCart } from "@/lib/portal";
+import {
+  benefitFor,
+  canOrderWelfare,
+  employeeEntitlements,
+  nextOrderNumber,
+  pricedPersonalCart,
+  pricedWelfareCart,
+  welfareRoundFor,
+} from "@/lib/portal";
 import { payments } from "@/lib/providers/payment";
 import { requireEmployee } from "@/lib/session";
+import { getSettings } from "@/lib/settings";
 import type { ActionState } from "@/components/forms";
+import type { PaymentMethod } from "@prisma/client";
 
-async function openRoundFor(emp: Awaited<ReturnType<typeof requireEmployee>>) {
-  const view = await currentRound(emp.department);
+type Emp = Awaited<ReturnType<typeof requireEmployee>>;
+
+async function openWelfareRound(emp: Emp) {
+  const view = await welfareRoundFor(emp);
   const existing = view
     ? await db.order.findUnique({ where: { employeeId_roundId: { employeeId: emp.id, roundId: view.round.id } } })
     : null;
-  if (!view || !canOrder(view, emp, !!existing)) return null;
+  if (!view || !canOrderWelfare(view, !!existing)) return null;
   return { view, existing };
 }
 
+function workplaceAddress(emp: Emp) {
+  return [emp.workLocation, emp.workAddress].filter(Boolean).join(" · ") || null;
+}
+
+// ---------- cart ----------
+
 const cartSchema = z.object({
+  kind: z.enum(["WELFARE", "PERSONAL"]),
   productId: z.string().min(1),
   size: z.string().min(1, "กรุณาเลือกไซส์"),
   length: z.string().optional(),
@@ -34,50 +53,67 @@ export async function saveCartItem(_: ActionState, form: FormData): Promise<Acti
   const emp = await requireEmployee();
   const parsed = cartSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const ctx = await openRoundFor(emp);
-  if (!ctx) return { error: "ขณะนี้ไม่ได้เปิดรับคำสั่งซื้อ" };
-  const product = await db.product.findUnique({ where: { id: parsed.data.productId } });
+  const input = parsed.data;
+  const product = await db.product.findUnique({ where: { id: input.productId } });
   if (!product || !product.active) return { error: "ไม่พบสินค้า" };
-  if (!product.sizes.includes(parsed.data.size)) return { error: "ไซส์ไม่ถูกต้อง" };
-  if (product.lengths.length > 0 && !product.lengths.includes(parsed.data.length ?? "")) return { error: "กรุณาเลือกความยาว" };
+  if (!product.sizes.includes(input.size)) return { error: "ไซส์ไม่ถูกต้อง" };
+  if (product.lengths.length > 0 && !product.lengths.includes(input.length ?? "")) return { error: "กรุณาเลือกความยาว" };
+
+  let roundId: string | null = null;
+  if (input.kind === "WELFARE") {
+    const ctx = await openWelfareRound(emp);
+    if (!ctx) return { error: "ขณะนี้ไม่ได้เปิดรับคำสั่งซื้อ" };
+    const benefit = benefitFor(ctx.view.round, emp.department);
+    const allowed =
+      benefit.mode === "CREDIT"
+        ? product.creditAllowed && (product.departments.length === 0 || product.departments.includes(emp.department))
+        : (await employeeEntitlements(emp, ctx.view.round.opensAt)).has(product.id);
+    if (!allowed) return { error: "สินค้านี้ไม่อยู่ในสิทธิ์ของคุณ สั่งได้ที่ร้านค้า (Personal Order)" };
+    roundId = ctx.view.round.id;
+  } else if (!product.personalSale) {
+    return { error: "สินค้านี้ไม่ได้เปิดขายส่วนตัว" };
+  }
 
   const data = {
-    size: parsed.data.size,
-    length: product.lengths.length > 0 ? parsed.data.length! : null,
-    quantity: parsed.data.quantity,
-    note: parsed.data.note || null,
+    size: input.size,
+    length: product.lengths.length > 0 ? input.length! : null,
+    quantity: input.quantity,
+    note: input.note || null,
   };
-  await db.cartItem.upsert({
-    where: { employeeId_roundId_productId: { employeeId: emp.id, roundId: ctx.view.round.id, productId: product.id } },
-    create: { employeeId: emp.id, roundId: ctx.view.round.id, productId: product.id, ...data },
-    update: data,
-  });
+  const existing = await db.cartItem.findFirst({ where: { employeeId: emp.id, kind: input.kind, roundId, productId: product.id } });
+  if (existing) await db.cartItem.update({ where: { id: existing.id }, data });
+  else await db.cartItem.create({ data: { employeeId: emp.id, kind: input.kind, roundId, productId: product.id, ...data } });
+
   revalidatePath("/");
-  redirect(parsed.data.next === "checkout" ? "/checkout" : "/");
+  if (input.kind === "PERSONAL") redirect(input.next === "cart" ? "/store/cart" : "/store?added=1");
+  redirect(input.next === "checkout" ? "/checkout" : "/");
 }
 
 export async function removeCartItem(form: FormData) {
   const emp = await requireEmployee();
-  await db.cartItem.deleteMany({ where: { employeeId: emp.id, productId: String(form.get("productId")) } });
+  const kind = form.get("kind") === "PERSONAL" ? "PERSONAL" : "WELFARE";
+  await db.cartItem.deleteMany({ where: { employeeId: emp.id, kind, productId: String(form.get("productId")) } });
   revalidatePath("/");
-  redirect(form.get("next") === "checkout" ? "/checkout" : "/");
+  const next = form.get("next");
+  redirect(next === "checkout" ? "/checkout" : next === "cart" ? "/store/cart" : kind === "PERSONAL" ? "/store" : "/");
 }
 
-/** Copy a confirmed order back into the cart so it can be changed. */
+/** Copy a confirmed welfare order back into the cart so it can be changed. */
 export async function startEdit(form: FormData) {
   const emp = await requireEmployee();
   const order = await db.order.findFirst({
-    where: { id: String(form.get("orderId")), employeeId: emp.id },
+    where: { id: String(form.get("orderId")), employeeId: emp.id, kind: "WELFARE" },
     include: { items: true },
   });
   if (!order) redirect("/orders");
-  const ctx = await openRoundFor(emp);
+  const ctx = await openWelfareRound(emp);
   if (!ctx || ctx.view.round.id !== order.roundId) redirect(`/orders/${order.id}`);
   await db.$transaction([
-    db.cartItem.deleteMany({ where: { employeeId: emp.id, roundId: order.roundId } }),
+    db.cartItem.deleteMany({ where: { employeeId: emp.id, kind: "WELFARE", roundId: order.roundId } }),
     db.cartItem.createMany({
       data: order.items.map((i) => ({
         employeeId: emp.id,
+        kind: "WELFARE" as const,
         roundId: order.roundId,
         productId: i.productId,
         size: i.size,
@@ -92,49 +128,48 @@ export async function startEdit(form: FormData) {
 
 export async function discardEdit() {
   const emp = await requireEmployee();
-  const view = await currentRound(emp.department);
-  if (view) await db.cartItem.deleteMany({ where: { employeeId: emp.id, roundId: view.round.id } });
+  const view = await welfareRoundFor(emp);
+  if (view) await db.cartItem.deleteMany({ where: { employeeId: emp.id, kind: "WELFARE", roundId: view.round.id } });
   redirect("/");
 }
 
-const checkoutSchema = z.object({
-  deliveryMethod: z.enum(["BRANCH", "HOME"]),
-  branchId: z.string().optional(),
-  homeAddress: z.string().max(500).optional(),
-  paymentMethod: z.enum(["PROMPTPAY", "CARD"]).optional(),
-});
+// ---------- checkout ----------
 
-export async function placeOrder(_: ActionState, form: FormData): Promise<ActionState> {
+const paymentMethod = z.enum(["PROMPTPAY", "MOBILE_BANKING", "CREDIT_CARD", "DEBIT_CARD"]).optional();
+
+async function startPayment(orderId: string, amount: number, method: PaymentMethod) {
+  const payment = await db.payment.create({ data: { orderId, amount, method, provider: payments().name } });
+  const session = await payments().createSession({ paymentId: payment.id, amount, method });
+  await db.payment.update({ where: { id: payment.id }, data: { providerRef: session.providerRef } });
+  redirect(`/pay/${payment.id}`);
+}
+
+export async function placeWelfareOrder(_: ActionState, form: FormData): Promise<ActionState> {
   const emp = await requireEmployee();
-  const parsed = checkoutSchema.safeParse(Object.fromEntries(form));
-  if (!parsed.success) return { error: "ข้อมูลไม่ครบ" };
-  const input = parsed.data;
-  const ctx = await openRoundFor(emp);
+  const method = paymentMethod.safeParse(form.get("paymentMethod") || undefined);
+  if (!method.success) return { error: "วิธีชำระเงินไม่ถูกต้อง" };
+  const ctx = await openWelfareRound(emp);
   if (!ctx) return { error: "ขณะนี้ไม่ได้เปิดรับคำสั่งซื้อหรือแก้ไขคำสั่งซื้อ" };
   const { view, existing } = ctx;
   const round = view.round;
 
-  const { lines } = await pricedCart(emp, round.id);
+  const { lines, totals, benefit } = await pricedWelfareCart(emp, view);
   if (lines.length === 0) return { error: "ยังไม่ได้เลือกรายการ" };
-  if (input.deliveryMethod === "BRANCH" && !input.branchId) return { error: "กรุณาเลือกสาขาที่รับ" };
-  if (input.deliveryMethod === "HOME" && !input.homeAddress?.trim()) return { error: "กรุณากรอกที่อยู่สำหรับจัดส่ง" };
-
-  const deliveryFee = input.deliveryMethod === "HOME" ? round.homeDeliveryFee : 0;
-  const totals = computeTotals(lines, deliveryFee);
   const amountPaid = existing?.amountPaid ?? 0;
   const due = totals.total - amountPaid;
-  if (due > 0 && !input.paymentMethod) return { error: "กรุณาเลือกวิธีชำระเงิน" };
+  if (due > 0 && !method.data) return { error: "กรุณาเลือกวิธีชำระส่วนเกิน" };
 
   const paymentStatus = due > 0 ? "PENDING" : due < 0 ? "REFUND_DUE" : totals.total === 0 ? "NOT_REQUIRED" : "PAID";
   const orderData = {
-    deliveryMethod: input.deliveryMethod,
-    branchId: input.deliveryMethod === "BRANCH" ? input.branchId! : null,
-    homeAddress: input.deliveryMethod === "HOME" ? input.homeAddress!.trim() : null,
-    extrasTotal: totals.extrasTotal,
-    deliveryFee,
+    benefitMode: benefit.mode,
+    deliveryMethod: "WORKPLACE" as const,
+    deliveryAddress: workplaceAddress(emp),
+    subtotal: totals.subtotal,
+    creditUsed: totals.creditUsed,
+    deliveryFee: 0,
     total: totals.total,
     paymentStatus,
-    paymentMethod: due > 0 ? input.paymentMethod! : (existing?.paymentMethod ?? null),
+    paymentMethod: due > 0 ? method.data! : (existing?.paymentMethod ?? null),
   } as const;
   const itemRows = lines.map((l) => ({
     productId: l.productId,
@@ -160,29 +195,20 @@ export async function placeOrder(_: ActionState, form: FormData): Promise<Action
       o = await tx.order.create({
         data: {
           ...orderData,
-          orderNumber: await nextOrderNumber(round),
+          kind: "WELFARE",
+          orderNumber: await nextOrderNumber("WELFARE", round),
           employeeId: emp.id,
           roundId: round.id,
           items: { create: itemRows },
-          events: { create: { status: "PLACED", message: "สั่งคำสั่งซื้อแล้ว" } },
+          events: { create: { status: "PLACED", message: "ยืนยันคำสั่งซื้อ" } },
         },
       });
     }
-    await tx.cartItem.deleteMany({ where: { employeeId: emp.id, roundId: round.id } });
-    if (input.deliveryMethod === "HOME" && !emp.homeAddress) {
-      await tx.employee.update({ where: { id: emp.id }, data: { homeAddress: input.homeAddress!.trim() } });
-    }
+    await tx.cartItem.deleteMany({ where: { employeeId: emp.id, kind: "WELFARE", roundId: round.id } });
     return o;
   });
 
-  if (due > 0) {
-    const payment = await db.payment.create({
-      data: { orderId: order.id, amount: due, method: input.paymentMethod!, provider: payments().name },
-    });
-    const session = await payments().createSession({ paymentId: payment.id, amount: due, method: input.paymentMethod! });
-    await db.payment.update({ where: { id: payment.id }, data: { providerRef: session.providerRef } });
-    redirect(`/pay/${payment.id}`);
-  }
+  if (due > 0) await startPayment(order.id, due, method.data!);
 
   await notifyEmployee(emp.id, {
     kind: existing ? "ORDER_EDITED" : "ORDER_CONFIRMED",
@@ -195,13 +221,67 @@ export async function placeOrder(_: ActionState, form: FormData): Promise<Action
   redirect(`/orders/${order.id}?done=1`);
 }
 
+const personalSchema = z.object({
+  deliveryMethod: z.enum(["WORKPLACE", "HOME"]),
+  homeAddress: z.string().max(500).optional(),
+  paymentMethod,
+});
+
+export async function placePersonalOrder(_: ActionState, form: FormData): Promise<ActionState> {
+  const emp = await requireEmployee();
+  const parsed = personalSchema.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: "ข้อมูลไม่ครบ" };
+  const input = parsed.data;
+  if (input.deliveryMethod === "HOME" && !input.homeAddress?.trim()) return { error: "กรุณากรอกที่อยู่สำหรับจัดส่ง" };
+  if (!input.paymentMethod) return { error: "กรุณาเลือกวิธีชำระเงิน" };
+  const { homeDeliveryFee } = await getSettings();
+  const { lines, totals } = await pricedPersonalCart(emp, input.deliveryMethod === "HOME" ? homeDeliveryFee : 0);
+  if (lines.length === 0) return { error: "ตะกร้ายังว่างอยู่" };
+
+  const order = await db.$transaction(async (tx) => {
+    const o = await tx.order.create({
+      data: {
+        kind: "PERSONAL",
+        orderNumber: await nextOrderNumber("PERSONAL"),
+        employeeId: emp.id,
+        deliveryMethod: input.deliveryMethod,
+        deliveryAddress: input.deliveryMethod === "HOME" ? input.homeAddress!.trim() : workplaceAddress(emp),
+        subtotal: totals.subtotal,
+        deliveryFee: totals.deliveryFee,
+        total: totals.total,
+        paymentStatus: "PENDING",
+        paymentMethod: input.paymentMethod,
+        items: {
+          create: lines.map((l) => ({
+            productId: l.productId,
+            size: l.size,
+            length: l.length,
+            quantity: l.quantity,
+            entitledQty: 0,
+            extraQty: l.quantity,
+            unitPrice: l.unitPrice,
+            note: l.note,
+          })),
+        },
+        events: { create: { status: "PLACED", message: "สั่งซื้อ (รอชำระเงิน)" } },
+      },
+    });
+    await tx.cartItem.deleteMany({ where: { employeeId: emp.id, kind: "PERSONAL" } });
+    if (input.deliveryMethod === "HOME" && !emp.homeAddress) {
+      await tx.employee.update({ where: { id: emp.id }, data: { homeAddress: input.homeAddress!.trim() } });
+    }
+    return o;
+  });
+  await startPayment(order.id, order.total, input.paymentMethod);
+  return undefined;
+}
+
 /** Mock provider only: the tester confirms the payment themselves. A real gateway would call this from its webhook. */
 export async function simulatePayment(form: FormData) {
   const emp = await requireEmployee();
   if (!payments().simulated) throw new Error("Payment confirmation must come from the payment provider");
   const payment = await db.payment.findFirst({
     where: { id: String(form.get("paymentId")), order: { employeeId: emp.id } },
-    include: { order: true },
   });
   if (!payment) redirect("/orders");
   if (payment.status !== "PAID") await markPaymentPaid(payment.id);
@@ -209,11 +289,7 @@ export async function simulatePayment(form: FormData) {
 }
 
 async function markPaymentPaid(paymentId: string) {
-  const payment = await db.payment.update({
-    where: { id: paymentId },
-    data: { status: "PAID", paidAt: new Date() },
-    include: { order: true },
-  });
+  const payment = await db.payment.update({ where: { id: paymentId }, data: { status: "PAID", paidAt: new Date() } });
   const order = await db.order.update({
     where: { id: payment.orderId },
     data: { amountPaid: { increment: payment.amount } },
@@ -222,18 +298,34 @@ async function markPaymentPaid(paymentId: string) {
   await db.order.update({ where: { id: order.id }, data: { paymentStatus: settled ? "PAID" : "PENDING" } });
   await db.orderEvent.create({ data: { orderId: order.id, message: `ชำระเงิน ${baht(payment.amount)}` } });
   await notifyEmployee(order.employeeId, {
-    kind: "PAYMENT",
-    title: "ชำระเงินสำเร็จ",
-    body: `ชำระ ${baht(payment.amount)} สำหรับคำสั่งซื้อ ${order.orderNumber} เรียบร้อยแล้ว`,
-    href: `/orders/${order.id}`,
-  });
-  await notifyEmployee(order.employeeId, {
     kind: order.editCount > 0 ? "ORDER_EDITED" : "ORDER_CONFIRMED",
     title: order.editCount > 0 ? "แก้ไขคำสั่งซื้อแล้ว" : "ยืนยันคำสั่งซื้อ",
-    body: `${order.orderNumber}: ได้รับคำสั่งซื้อของคุณแล้ว`,
+    body: `${order.orderNumber} ยืนยันแล้ว ชำระ ${baht(payment.amount)} สำเร็จ`,
     href: `/orders/${order.id}`,
   });
 }
+
+// ---------- after-sales ----------
+
+export async function requestExchange(_: ActionState, form: FormData): Promise<ActionState> {
+  const emp = await requireEmployee();
+  const reason = z.enum(["WRONG_SIZE", "DEFECT", "WRONG_ITEM"]).safeParse(form.get("reason"));
+  const details = String(form.get("details") ?? "").trim();
+  if (!reason.success) return { error: "กรุณาเลือกเหตุผล" };
+  if (details.length < 3) return { error: "กรุณาระบุรายละเอียด เช่น สินค้าและไซส์ที่ต้องการ" };
+  const order = await db.order.findFirst({ where: { id: String(form.get("orderId")), employeeId: emp.id } });
+  if (!order) return { error: "ไม่พบคำสั่งซื้อ" };
+  await db.exchangeRequest.create({ data: { orderId: order.id, employeeId: emp.id, reason: reason.data, details: details.slice(0, 1000) } });
+  await notifyEmployee(emp.id, {
+    kind: "EXCHANGE",
+    title: "ได้รับคำขอเปลี่ยนสินค้า",
+    body: `${order.orderNumber}: ทีม Songsmai จะติดต่อกลับภายใน 3 วันทำการ`,
+    href: `/orders/${order.id}`,
+  });
+  redirect(`/orders/${order.id}`);
+}
+
+// ---------- account ----------
 
 export async function markAllRead() {
   const emp = await requireEmployee();

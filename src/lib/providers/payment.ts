@@ -2,7 +2,7 @@
 // The mock provider shows a sample PromptPay QR / card form and lets the tester mark it paid.
 // To go live, implement PaymentProvider with a Thai gateway (e.g. Omise / Opn, 2C2P, GB Prime Pay)
 // and select it with PAYMENT_PROVIDER. Its webhook should call markPaymentPaid().
-export type PaymentMethodName = "PROMPTPAY" | "CARD";
+export type PaymentMethodName = "PROMPTPAY" | "MOBILE_BANKING" | "CREDIT_CARD" | "DEBIT_CARD";
 
 export type PaymentSession = { providerRef: string; promptPayPayload?: string };
 

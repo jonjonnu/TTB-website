@@ -8,32 +8,40 @@ CREATE TYPE "OtpChannel" AS ENUM ('SMS', 'EMAIL');
 CREATE TYPE "OtpPurpose" AS ENUM ('REGISTER', 'RESET_PASSWORD');
 
 -- CreateEnum
-CREATE TYPE "DeliveryMethod" AS ENUM ('BRANCH', 'HOME');
+CREATE TYPE "RoundType" AS ENUM ('BIG_LOT', 'NEW_JOINERS');
 
 -- CreateEnum
-CREATE TYPE "OrderStatus" AS ENUM ('PLACED', 'ROUND_CLOSED', 'REVIEWING', 'PRODUCING', 'SHIPPED', 'DELIVERED', 'CANCELLED');
+CREATE TYPE "BenefitMode" AS ENUM ('FIXED', 'CREDIT');
+
+-- CreateEnum
+CREATE TYPE "PackingMode" AS ENUM ('PER_PERSON', 'PER_DEPARTMENT', 'PER_LOCATION');
+
+-- CreateEnum
+CREATE TYPE "OrderKind" AS ENUM ('WELFARE', 'PERSONAL');
+
+-- CreateEnum
+CREATE TYPE "DeliveryMethod" AS ENUM ('WORKPLACE', 'HOME');
+
+-- CreateEnum
+CREATE TYPE "OrderStatus" AS ENUM ('PLACED', 'ROUND_CLOSED', 'PRODUCING', 'SHIPPING', 'DELIVERED', 'CANCELLED');
 
 -- CreateEnum
 CREATE TYPE "PaymentStatus" AS ENUM ('NOT_REQUIRED', 'PENDING', 'PAID', 'REFUND_DUE');
 
 -- CreateEnum
-CREATE TYPE "PaymentMethod" AS ENUM ('PROMPTPAY', 'CARD');
+CREATE TYPE "PaymentMethod" AS ENUM ('PROMPTPAY', 'MOBILE_BANKING', 'CREDIT_CARD', 'DEBIT_CARD');
 
 -- CreateEnum
 CREATE TYPE "AdminRole" AS ENUM ('OWNER', 'ADMIN');
 
 -- CreateEnum
-CREATE TYPE "ExtensionScope" AS ENUM ('ALL', 'DEPARTMENT');
+CREATE TYPE "ExtensionScope" AS ENUM ('ALL', 'DEPARTMENT', 'EMPLOYEES');
 
--- CreateTable
-CREATE TABLE "Branch" (
-    "id" TEXT NOT NULL,
-    "code" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "region" TEXT NOT NULL,
+-- CreateEnum
+CREATE TYPE "ExchangeReason" AS ENUM ('WRONG_SIZE', 'DEFECT', 'WRONG_ITEM');
 
-    CONSTRAINT "Branch_pkey" PRIMARY KEY ("id")
-);
+-- CreateEnum
+CREATE TYPE "ExchangeStatus" AS ENUM ('REQUESTED', 'APPROVED', 'COMPLETED', 'REJECTED');
 
 -- CreateTable
 CREATE TABLE "Employee" (
@@ -46,9 +54,11 @@ CREATE TABLE "Employee" (
     "subDepartment" TEXT,
     "position" TEXT NOT NULL,
     "managerName" TEXT,
+    "startDate" TIMESTAMP(3),
+    "workLocation" TEXT,
+    "workAddress" TEXT,
     "email" TEXT,
     "phone" TEXT,
-    "branchId" TEXT,
     "homeAddress" TEXT,
     "passwordHash" TEXT,
     "registeredAt" TIMESTAMP(3),
@@ -83,11 +93,16 @@ CREATE TABLE "Product" (
     "id" TEXT NOT NULL,
     "sku" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "category" TEXT,
     "description" TEXT,
     "imageUrl" TEXT,
     "price" INTEGER NOT NULL,
     "sizes" TEXT[],
     "lengths" TEXT[],
+    "creditAllowed" BOOLEAN NOT NULL DEFAULT true,
+    "personalSale" BOOLEAN NOT NULL DEFAULT true,
+    "departments" TEXT[],
+    "stock" INTEGER NOT NULL DEFAULT 0,
     "shopifyProductId" TEXT,
     "active" BOOLEAN NOT NULL DEFAULT true,
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
@@ -103,6 +118,7 @@ CREATE TABLE "EntitlementRule" (
     "gender" "Gender",
     "department" TEXT,
     "position" TEXT,
+    "minYears" INTEGER,
     "quantity" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -112,13 +128,15 @@ CREATE TABLE "EntitlementRule" (
 -- CreateTable
 CREATE TABLE "OrderRound" (
     "id" TEXT NOT NULL,
+    "type" "RoundType" NOT NULL,
+    "name" TEXT NOT NULL,
     "year" INTEGER NOT NULL,
-    "roundNumber" INTEGER NOT NULL,
     "opensAt" TIMESTAMP(3) NOT NULL,
     "closesAt" TIMESTAMP(3) NOT NULL,
     "originalClosesAt" TIMESTAMP(3) NOT NULL,
     "deliveryDays" INTEGER NOT NULL DEFAULT 45,
-    "homeDeliveryFee" INTEGER NOT NULL DEFAULT 150,
+    "creditEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "packing" "PackingMode" NOT NULL DEFAULT 'PER_PERSON',
     "allowEdits" BOOLEAN NOT NULL DEFAULT true,
     "closedEarlyAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -127,11 +145,31 @@ CREATE TABLE "OrderRound" (
 );
 
 -- CreateTable
+CREATE TABLE "RoundPolicy" (
+    "id" TEXT NOT NULL,
+    "roundId" TEXT NOT NULL,
+    "department" TEXT NOT NULL,
+    "mode" "BenefitMode" NOT NULL,
+    "creditAmount" INTEGER NOT NULL DEFAULT 0,
+
+    CONSTRAINT "RoundPolicy_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RoundMember" (
+    "roundId" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+
+    CONSTRAINT "RoundMember_pkey" PRIMARY KEY ("roundId","employeeId")
+);
+
+-- CreateTable
 CREATE TABLE "RoundExtension" (
     "id" TEXT NOT NULL,
     "roundId" TEXT NOT NULL,
     "scope" "ExtensionScope" NOT NULL DEFAULT 'ALL',
     "department" TEXT,
+    "employeeIds" TEXT[],
     "previousClosesAt" TIMESTAMP(3) NOT NULL,
     "newClosesAt" TIMESTAMP(3) NOT NULL,
     "reason" TEXT NOT NULL,
@@ -145,7 +183,8 @@ CREATE TABLE "RoundExtension" (
 CREATE TABLE "CartItem" (
     "id" TEXT NOT NULL,
     "employeeId" TEXT NOT NULL,
-    "roundId" TEXT NOT NULL,
+    "kind" "OrderKind" NOT NULL,
+    "roundId" TEXT,
     "productId" TEXT NOT NULL,
     "size" TEXT NOT NULL,
     "length" TEXT,
@@ -160,18 +199,22 @@ CREATE TABLE "CartItem" (
 CREATE TABLE "Order" (
     "id" TEXT NOT NULL,
     "orderNumber" TEXT NOT NULL,
+    "kind" "OrderKind" NOT NULL DEFAULT 'WELFARE',
     "employeeId" TEXT NOT NULL,
-    "roundId" TEXT NOT NULL,
+    "roundId" TEXT,
+    "benefitMode" "BenefitMode",
     "status" "OrderStatus" NOT NULL DEFAULT 'PLACED',
-    "deliveryMethod" "DeliveryMethod" NOT NULL DEFAULT 'BRANCH',
-    "branchId" TEXT,
-    "homeAddress" TEXT,
-    "extrasTotal" INTEGER NOT NULL DEFAULT 0,
+    "deliveryMethod" "DeliveryMethod" NOT NULL DEFAULT 'WORKPLACE',
+    "deliveryAddress" TEXT,
+    "subtotal" INTEGER NOT NULL DEFAULT 0,
+    "creditUsed" INTEGER NOT NULL DEFAULT 0,
     "deliveryFee" INTEGER NOT NULL DEFAULT 0,
     "total" INTEGER NOT NULL DEFAULT 0,
     "amountPaid" INTEGER NOT NULL DEFAULT 0,
     "paymentStatus" "PaymentStatus" NOT NULL DEFAULT 'NOT_REQUIRED',
     "paymentMethod" "PaymentMethod",
+    "carrier" TEXT,
+    "trackingNumber" TEXT,
     "editCount" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -222,6 +265,21 @@ CREATE TABLE "Payment" (
 );
 
 -- CreateTable
+CREATE TABLE "ExchangeRequest" (
+    "id" TEXT NOT NULL,
+    "orderId" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "reason" "ExchangeReason" NOT NULL,
+    "details" TEXT NOT NULL,
+    "status" "ExchangeStatus" NOT NULL DEFAULT 'REQUESTED',
+    "adminNote" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ExchangeRequest_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Notification" (
     "id" TEXT NOT NULL,
     "employeeId" TEXT NOT NULL,
@@ -253,6 +311,7 @@ CREATE TABLE "AdminUser" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "organization" TEXT,
     "passwordHash" TEXT NOT NULL,
     "role" "AdminRole" NOT NULL DEFAULT 'ADMIN',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -269,10 +328,13 @@ CREATE TABLE "Setting" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Branch_code_key" ON "Branch"("code");
+CREATE UNIQUE INDEX "Employee_employeeCode_key" ON "Employee"("employeeCode");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Employee_employeeCode_key" ON "Employee"("employeeCode");
+CREATE INDEX "Employee_department_idx" ON "Employee"("department");
+
+-- CreateIndex
+CREATE INDEX "Employee_workLocation_idx" ON "Employee"("workLocation");
 
 -- CreateIndex
 CREATE INDEX "OtpCode_employeeId_purpose_idx" ON "OtpCode"("employeeId", "purpose");
@@ -281,13 +343,16 @@ CREATE INDEX "OtpCode_employeeId_purpose_idx" ON "OtpCode"("employeeId", "purpos
 CREATE UNIQUE INDEX "Product_sku_key" ON "Product"("sku");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "OrderRound_year_roundNumber_key" ON "OrderRound"("year", "roundNumber");
+CREATE UNIQUE INDEX "RoundPolicy_roundId_department_key" ON "RoundPolicy"("roundId", "department");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CartItem_employeeId_roundId_productId_key" ON "CartItem"("employeeId", "roundId", "productId");
+CREATE INDEX "CartItem_employeeId_kind_idx" ON "CartItem"("employeeId", "kind");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Order_orderNumber_key" ON "Order"("orderNumber");
+
+-- CreateIndex
+CREATE INDEX "Order_roundId_status_idx" ON "Order"("roundId", "status");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Order_employeeId_roundId_key" ON "Order"("employeeId", "roundId");
@@ -299,13 +364,19 @@ CREATE INDEX "Notification_employeeId_createdAt_idx" ON "Notification"("employee
 CREATE UNIQUE INDEX "AdminUser_email_key" ON "AdminUser"("email");
 
 -- AddForeignKey
-ALTER TABLE "Employee" ADD CONSTRAINT "Employee_branchId_fkey" FOREIGN KEY ("branchId") REFERENCES "Branch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "OtpCode" ADD CONSTRAINT "OtpCode_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "EntitlementRule" ADD CONSTRAINT "EntitlementRule_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RoundPolicy" ADD CONSTRAINT "RoundPolicy_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "OrderRound"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RoundMember" ADD CONSTRAINT "RoundMember_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "OrderRound"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RoundMember" ADD CONSTRAINT "RoundMember_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RoundExtension" ADD CONSTRAINT "RoundExtension_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "OrderRound"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -323,10 +394,7 @@ ALTER TABLE "CartItem" ADD CONSTRAINT "CartItem_productId_fkey" FOREIGN KEY ("pr
 ALTER TABLE "Order" ADD CONSTRAINT "Order_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Order" ADD CONSTRAINT "Order_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "OrderRound"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Order" ADD CONSTRAINT "Order_branchId_fkey" FOREIGN KEY ("branchId") REFERENCES "Branch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Order" ADD CONSTRAINT "Order_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "OrderRound"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -339,6 +407,12 @@ ALTER TABLE "OrderEvent" ADD CONSTRAINT "OrderEvent_orderId_fkey" FOREIGN KEY ("
 
 -- AddForeignKey
 ALTER TABLE "Payment" ADD CONSTRAINT "Payment_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExchangeRequest" ADD CONSTRAINT "ExchangeRequest_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ExchangeRequest" ADD CONSTRAINT "ExchangeRequest_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Notification" ADD CONSTRAINT "Notification_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;

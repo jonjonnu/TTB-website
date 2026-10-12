@@ -17,7 +17,7 @@ export function LoginForm() {
         <Label
           htmlFor="password"
           extra={
-            <Link href="/forgot-password" className="text-xs font-semibold text-navy">
+            <Link href="/forgot-password" className="text-xs font-medium text-navy">
               ลืมรหัสผ่าน?
             </Link>
           }

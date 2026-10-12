@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "ระบบสั่งเครื่องแบบพนักงาน TTB × Songsmai",
 };
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0b3a7e" };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#091a32" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
-          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Kanit:wght@300;400;500;600&display=swap"
           rel="stylesheet"
         />
       </head>
