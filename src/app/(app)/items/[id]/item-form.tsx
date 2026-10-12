@@ -65,8 +65,8 @@ export function ItemForm({ kind, mode, product, entitled, creditLeft, initial, n
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {mode === "FIXED" ? (
               <>
-                <Badge>สิทธิ์ {entitled} ตัว</Badge>
-                <Badge tone="gray">ตัวที่เพิ่ม {baht(product.price)} / ตัว</Badge>
+                {entitled > 0 ? <Badge>สิทธิ์ {entitled} ตัว</Badge> : <Badge tone="accent">นอกชุดสิทธิ์ · ชำระเอง</Badge>}
+                <Badge tone="gray">{entitled > 0 ? "ตัวที่เพิ่ม" : "ราคา"} {baht(product.price)} / ตัว</Badge>
               </>
             ) : (
               <>
@@ -115,7 +115,9 @@ export function ItemForm({ kind, mode, product, entitled, creditLeft, initial, n
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">จำนวน</p>
-            {mode === "FIXED" && <p className="text-xs text-muted">ฟรีตามสิทธิ์ {entitled} ตัว เกินจากนี้ชำระเพิ่ม</p>}
+            {mode === "FIXED" && (
+              <p className="text-xs text-muted">{entitled > 0 ? `ฟรีตามสิทธิ์ ${entitled} ตัว เกินจากนี้ชำระเพิ่ม` : "ไม่อยู่ในชุดสิทธิ์ของคุณ ชำระเต็มราคาทุกตัว"}</p>
+            )}
           </div>
           <div className="flex items-center rounded-lg border border-line">
             <button type="button" aria-label="ลด" className="h-10 w-10 text-lg" onClick={() => setQty((q) => Math.max(1, q - 1))}>

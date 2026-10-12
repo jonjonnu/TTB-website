@@ -11,6 +11,7 @@ import {
   benefitFor,
   canOrderWelfare,
   employeeEntitlements,
+  inDepartmentCatalog,
   nextOrderNumber,
   pricedPersonalCart,
   pricedWelfareCart,
@@ -65,9 +66,8 @@ export async function saveCartItem(_: ActionState, form: FormData): Promise<Acti
     if (!ctx) return { error: "ขณะนี้ไม่ได้เปิดรับคำสั่งซื้อ" };
     const benefit = benefitFor(ctx.view.round, emp.department);
     const allowed =
-      benefit.mode === "CREDIT"
-        ? product.creditAllowed && (product.departments.length === 0 || product.departments.includes(emp.department))
-        : (await employeeEntitlements(emp, ctx.view.round.opensAt)).has(product.id);
+      inDepartmentCatalog(product, emp.department) ||
+      (benefit.mode === "FIXED" && (await employeeEntitlements(emp, ctx.view.round.opensAt)).has(product.id));
     if (!allowed) return { error: "สินค้านี้ไม่อยู่ในสิทธิ์ของคุณ สั่งได้ที่ร้านค้า (Personal Order)" };
     roundId = ctx.view.round.id;
   } else if (!product.personalSale) {

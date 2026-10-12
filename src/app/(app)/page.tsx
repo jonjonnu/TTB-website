@@ -19,7 +19,8 @@ export default async function HomePage() {
   const orderedBy = new Map(order?.items.map((i) => [i.productId, i]) ?? []);
   const selectionOf = (productId: string, c: (typeof catalog.items)[number]["cart"]) =>
     c ?? (!editing ? orderedBy.get(productId) : undefined);
-  const chosen = catalog.items.filter((p) => selectionOf(p.product.id, p.cart)).length;
+  const setItems = catalog.items.filter((p) => p.entitled > 0);
+  const chosen = setItems.filter((p) => selectionOf(p.product.id, p.cart)).length;
   const showCartBar = open && catalog.cartCount > 0 && cart;
   const credit = catalog.benefit.mode === "CREDIT";
 
@@ -94,12 +95,12 @@ export default async function HomePage() {
               <>
                 <div className="mt-3 flex justify-between text-xs opacity-90">
                   <span>
-                    เลือกแล้ว {chosen} จาก {catalog.items.length} รายการ
+                    เลือกแล้ว {chosen} จาก {setItems.length} รายการในชุดสิทธิ์
                   </span>
                   <span>ปิดรับ {thDateTime(view.closeAt)}</span>
                 </div>
                 <div className="mt-1.5 h-1.5 rounded-full bg-white/20">
-                  <div className="h-1.5 rounded-full bg-sand" style={{ width: `${catalog.items.length ? (chosen / catalog.items.length) * 100 : 0}%` }} />
+                  <div className="h-1.5 rounded-full bg-sand" style={{ width: `${setItems.length ? (chosen / setItems.length) * 100 : 0}%` }} />
                 </div>
               </>
             )}
@@ -132,7 +133,7 @@ export default async function HomePage() {
             <div className="mb-2 flex items-end justify-between">
               <div>
                 <h3 className="font-medium">{credit ? "สินค้าสำหรับแผนกคุณ" : "เครื่องแบบตามสิทธิ์ของคุณ"}</h3>
-                {!credit && <p className="text-xs text-muted">จัดสรรตามตำแหน่งและอายุงาน · ไม่มีค่าใช้จ่าย</p>}
+                {!credit && <p className="text-xs text-muted">ชุดสิทธิ์ตามแผนก ตำแหน่ง และอายุงาน ฟรี · สั่งเกินหรือเพิ่มรายการอื่นได้ ชำระส่วนเกินเอง</p>}
               </div>
               {credit ? (
                 <span className="text-xs text-muted">{catalog.items.length} รายการ</span>
@@ -158,7 +159,7 @@ export default async function HomePage() {
                             <b>{baht(product.price)}</b> <Badge tone="gray">ใช้เครดิตได้</Badge>
                           </p>
                         ) : (
-                          <p className="text-xs text-muted">สิทธิ์ {entitled} ตัว</p>
+                          <p className="text-xs text-muted">{entitled > 0 ? `สิทธิ์ ${entitled} ตัว` : `ซื้อเพิ่ม ${baht(product.price)}`}</p>
                         )}
                         {sel ? (
                           <Badge tone="ok">
@@ -166,7 +167,7 @@ export default async function HomePage() {
                             {sel.length ? ` · ${sel.length}` : ""} × {sel.quantity}
                           </Badge>
                         ) : (
-                          <Badge tone={credit ? "gray" : "accent"}>{credit ? "ยังไม่เลือก" : "ยังไม่เลือกไซส์"}</Badge>
+                          <Badge tone={credit || !entitled ? "gray" : "accent"}>{credit || !entitled ? "ยังไม่เลือก" : "ยังไม่เลือกไซส์"}</Badge>
                         )}
                       </div>
                     </>

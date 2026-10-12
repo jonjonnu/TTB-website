@@ -2,7 +2,7 @@
 import { db } from "@/lib/db";
 import { entitlementsFor, orderTotals, priceAll, priceFixed, yearsOfService, type BenefitMode } from "@/lib/entitlements";
 import { deliveryDueAt, effectiveCloseAt, roundPhase } from "@/lib/rounds";
-import type { Employee, OrderRound, Prisma, RoundExtension, RoundPolicy } from "@prisma/client";
+import type { Employee, OrderRound, Prisma, Product, RoundExtension, RoundPolicy } from "@prisma/client";
 
 export type RoundWithRules = OrderRound & { extensions: RoundExtension[]; policies: RoundPolicy[] };
 
@@ -72,23 +72,36 @@ export async function employeeEntitlements(emp: Pick<Employee, "gender" | "depar
   return entitlementsFor(rules, { ...emp, years: yearsOfService(emp.startDate, at) });
 }
 
+/** A product the employee's department can order in a welfare round (with credit, or paid on top of their set). */
+export function inDepartmentCatalog(p: Pick<Product, "active" | "creditAllowed" | "departments">, department: string) {
+  return p.active && p.creditAllowed && (p.departments.length === 0 || p.departments.includes(department));
+}
+
 /** Products shown on the welfare home page, with what's in the cart / order. */
 export async function welfareCatalog(emp: Employee, view: RoundView | null) {
   const roundId = view?.round.id ?? null;
   const benefit = view ? benefitFor(view.round, emp.department) : ({ mode: "FIXED", credit: 0 } as Benefit);
-  const [entitled, products, cart, order] = await Promise.all([
+  const [entitled, products, genderRules, cart, order] = await Promise.all([
     employeeEntitlements(emp, view?.round.opensAt),
     db.product.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    db.entitlementRule.findMany({ select: { productId: true, gender: true } }),
     roundId ? db.cartItem.findMany({ where: { employeeId: emp.id, kind: "WELFARE", roundId } }) : Promise.resolve([]),
     roundId
       ? db.order.findUnique({ where: { employeeId_roundId: { employeeId: emp.id, roundId } }, include: { items: true } })
       : Promise.resolve(null),
   ]);
   const cartBy = new Map(cart.map((c) => [c.productId, c]));
+  // Hide items whose entitlement rules are all for the other gender (e.g. skirts for men).
+  const otherGenderOnly = (id: string) => {
+    const rs = genderRules.filter((r) => r.productId === id);
+    return rs.length > 0 && rs.every((r) => r.gender && r.gender !== emp.gender);
+  };
+  const extra = (p: Product) => inDepartmentCatalog(p, emp.department) && !otherGenderOnly(p.id);
+  // FIXED: their set first, then other department items they can add and pay for.
   const visible =
     benefit.mode === "CREDIT"
-      ? products.filter((p) => p.creditAllowed && (p.departments.length === 0 || p.departments.includes(emp.department)))
-      : products.filter((p) => entitled.has(p.id));
+      ? products.filter(extra)
+      : [...products.filter((p) => entitled.has(p.id)), ...products.filter((p) => !entitled.has(p.id) && extra(p))];
   return {
     benefit,
     order,
