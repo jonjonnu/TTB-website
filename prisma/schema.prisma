@@ -236,6 +236,7 @@ model RoundMember {
   employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@id([roundId, employeeId])
+  @@index([employeeId])
 }
 
 model RoundExtension {
@@ -319,6 +320,8 @@ model OrderItem {
   extraQty    Int // pieces priced (paid by credit and/or the employee)
   unitPrice   Int
   note        String?
+
+  @@index([orderId])
 }
 
 model OrderEvent {
@@ -328,6 +331,8 @@ model OrderEvent {
   status    OrderStatus?
   message   String
   createdAt DateTime     @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model Payment {
@@ -341,6 +346,8 @@ model Payment {
   providerRef String?
   paidAt      DateTime?
   createdAt   DateTime      @default(now())
+
+  @@index([orderId])
 }
 
 model ExchangeRequest {
@@ -355,6 +362,8 @@ model ExchangeRequest {
   adminNote  String?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
+
+  @@index([orderId])
 }
 
 model Notification {
@@ -395,4 +404,10 @@ model AdminUser {
 model Setting {
   key   String @id
   value String
+}
+
+// Last order number handed out per prefix (BL26-, NJ26-, PO-).
+model OrderCounter {
+  prefix String @id
+  value  Int
 }

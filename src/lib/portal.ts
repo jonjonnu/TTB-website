@@ -145,8 +145,14 @@ export function canOrderWelfare(view: RoundView | null, hasOrder: boolean) {
 export async function nextOrderNumber(kind: "WELFARE" | "PERSONAL", round?: OrderRound | null) {
   const prefix =
     kind === "PERSONAL" ? "PO-" : `${round!.type === "BIG_LOT" ? "BL" : "NJ"}${String(round!.year).slice(-2)}-`;
-  const count = await db.order.count({ where: { orderNumber: { startsWith: prefix } } });
-  return `${prefix}${String(count + 1).padStart(4, "0")}`;
+  // One atomic counter row per prefix, so two people checking out at the same moment never get the same number.
+  // The first number for a prefix continues from orders already in the database.
+  const [{ value }] = await db.$queryRaw<{ value: number }[]>`
+    INSERT INTO "OrderCounter" (prefix, value)
+    VALUES (${prefix}, (SELECT count(*)::int + 1 FROM "Order" WHERE "orderNumber" LIKE ${prefix + "%"}))
+    ON CONFLICT (prefix) DO UPDATE SET value = "OrderCounter".value + 1
+    RETURNING value`;
+  return `${prefix}${String(value).padStart(4, "0")}`;
 }
 
 export * from "@/lib/portal-labels";
