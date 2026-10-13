@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Songsmai brand colors (songsmai1938.com): beige background, deep navy, red for sale/alerts. */
+@theme {
+  --font-sans: "Kanit", "Barlow", system-ui, sans-serif;
+  --font-latin: "Barlow", "Kanit", system-ui, sans-serif;
+  --color-navy: #091a32;
+  --color-navy-dark: #050f1f;
+  --color-navy-50: #eef0f4;
+  --color-navy-100: #dde2ea;
+  --color-accent: #9a5b13;
+  --color-accent-50: #f6eedf;
+  --color-ink: #222222;
+  --color-muted: #6f6a60;
+  --color-line: #e2dccf;
+  --color-canvas: #eae5da;
+  --color-cream: #f7f4ee;
+  --color-sand: #e3dccd;
+  --color-ok: #1f7a4d;
+  --color-ok-50: #e6f3ea;
+  --color-warn: #9a5b13;
+  --color-warn-50: #f6eedf;
+  --color-bad: #e84e4e;
+  --color-bad-50: #fdecec;
+  --color-sidebar: #091a32;
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+}
+
+b,
+strong {
+  font-weight: 500;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}

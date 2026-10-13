@@ -1,0 +1,413 @@
+// TTB employee uniform portal data model.
+// Money is stored in whole Thai baht (Int).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum OtpChannel {
+  SMS
+  EMAIL
+}
+
+enum OtpPurpose {
+  REGISTER
+  RESET_PASSWORD
+}
+
+/// Welfare rounds: the annual Big Lot, and monthly New Joiners rounds for hand-picked employees.
+enum RoundType {
+  BIG_LOT
+  NEW_JOINERS
+}
+
+/// How a department receives its welfare in a round.
+enum BenefitMode {
+  FIXED // fixed entitlement items by position / years of service (Branch, Wealth)
+  CREDIT // a baht credit to spend on credit-eligible items, overage paid by the employee (Back Office)
+}
+
+enum PackingMode {
+  PER_PERSON
+  PER_DEPARTMENT
+  PER_LOCATION
+}
+
+enum OrderKind {
+  WELFARE // Big Lot or New Joiners
+  PERSONAL // employee buys at full price from the store
+}
+
+enum DeliveryMethod {
+  WORKPLACE
+  HOME
+}
+
+enum OrderStatus {
+  PLACED // ยืนยันคำสั่งซื้อ
+  ROUND_CLOSED // ปิดรอบสั่งซื้อ (welfare only)
+  PRODUCING // อยู่ระหว่างผลิต
+  SHIPPING // อยู่ระหว่างจัดส่ง
+  DELIVERED // จัดส่งสำเร็จ
+  CANCELLED
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  PAID
+  REFUND_DUE
+}
+
+enum PaymentMethod {
+  PROMPTPAY
+  MOBILE_BANKING
+  CREDIT_CARD
+  DEBIT_CARD
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+}
+
+enum ExtensionScope {
+  ALL
+  DEPARTMENT
+  EMPLOYEES
+}
+
+enum ExchangeReason {
+  WRONG_SIZE
+  DEFECT
+  WRONG_ITEM
+}
+
+enum ExchangeStatus {
+  REQUESTED
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
+// Employees are loaded by HR (CSV import). Registering = claiming a row by
+// employee code, verifying the phone/email on file with an OTP, and setting a password.
+model Employee {
+  id            String    @id @default(cuid())
+  employeeCode  String    @unique
+  firstName     String
+  lastName      String
+  gender        Gender
+  department    String // Branch / Wealth / Back Office
+  subDepartment String? // หน่วยงาน
+  position      String
+  managerName   String?
+  startDate     DateTime? // for years of service
+  workLocation  String? // where welfare orders are delivered
+  workAddress   String?
+  email         String?
+  phone         String?
+  homeAddress   String?
+  passwordHash  String?
+  registeredAt  DateTime?
+  notifyEmail   Boolean   @default(true)
+  notifySms     Boolean   @default(true)
+  notifyLine    Boolean   @default(false)
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  otpCodes      OtpCode[]
+  orders        Order[]
+  cartItems     CartItem[]
+  notifications Notification[]
+  roundMembers  RoundMember[]
+  exchanges     ExchangeRequest[]
+
+  @@index([department])
+  @@index([workLocation])
+}
+
+model OtpCode {
+  id                  String     @id @default(cuid())
+  employeeId          String
+  employee            Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  purpose             OtpPurpose
+  channel             OtpChannel
+  codeHash            String
+  // Password chosen on the sign-up form, held until the code is verified.
+  pendingPasswordHash String?
+  attempts            Int        @default(0)
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime   @default(now())
+
+  @@index([employeeId, purpose])
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  sku              String   @unique
+  name             String
+  category         String? // ชุดเดรส / สูท / เสื้อ / กางเกง / อุปกรณ์
+  description      String?
+  imageUrl         String?
+  price            Int // every product has a price
+  sizes            String[]
+  lengths          String[] // e.g. สั้น / ปกติ / ยาว; empty if not applicable
+  creditAllowed    Boolean  @default(true) // can be bought with welfare credit
+  personalSale     Boolean  @default(true) // sold in the personal store
+  departments      String[] // departments that see it in the credit catalog; empty = all
+  stock            Int      @default(0)
+  shopifyProductId String?
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  rules      EntitlementRule[]
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+}
+
+// "Employees matching these filters get <quantity> of <product> free each welfare round."
+// A null filter means "any". Used by departments in FIXED mode.
+model EntitlementRule {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  gender     Gender?
+  department String?
+  position   String?
+  minYears   Int? // years of service at round open
+  quantity   Int
+  createdAt  DateTime @default(now())
+}
+
+model OrderRound {
+  id               String      @id @default(cuid())
+  type             RoundType
+  name             String // "Big Lot 2026", "New Joiners พ.ย. 2026"
+  year             Int
+  opensAt          DateTime
+  closesAt         DateTime // current close time for everyone (moves when extended for all)
+  originalClosesAt DateTime
+  deliveryDays     Int         @default(45) // days after close until uniforms reach the workplace
+  creditEnabled    Boolean     @default(true) // one switch for credit across all departments
+  packing          PackingMode @default(PER_PERSON)
+  allowEdits       Boolean     @default(true)
+  closedEarlyAt    DateTime?
+  createdAt        DateTime    @default(now())
+
+  policies   RoundPolicy[]
+  members    RoundMember[]
+  extensions RoundExtension[]
+  orders     Order[]
+  cartItems  CartItem[]
+}
+
+// Benefit mode and credit per department, per round. Credit belongs to the round, not the person,
+// and does not carry over.
+model RoundPolicy {
+  id           String      @id @default(cuid())
+  roundId      String
+  round        OrderRound  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  department   String
+  mode         BenefitMode
+  creditAmount Int         @default(0)
+
+  @@unique([roundId, department])
+}
+
+// Who may order in a New Joiners round (hand-picked by admin).
+model RoundMember {
+  roundId    String
+  round      OrderRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@id([roundId, employeeId])
+  @@index([employeeId])
+}
+
+model RoundExtension {
+  id               String         @id @default(cuid())
+  roundId          String
+  round            OrderRound     @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  scope            ExtensionScope @default(ALL)
+  department       String?
+  employeeIds      String[]
+  previousClosesAt DateTime
+  newClosesAt      DateTime
+  reason           String
+  createdBy        String
+  createdAt        DateTime       @default(now())
+}
+
+// Employee's in-progress selection, before checkout. Welfare carts belong to a round;
+// the personal store cart has no round.
+model CartItem {
+  id         String      @id @default(cuid())
+  employeeId String
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind       OrderKind
+  roundId    String?
+  round      OrderRound? @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size       String
+  length     String?
+  quantity   Int
+  note       String?
+  updatedAt  DateTime    @updatedAt
+
+  @@index([employeeId, kind])
+}
+
+model Order {
+  id              String         @id @default(cuid())
+  orderNumber     String         @unique
+  kind            OrderKind      @default(WELFARE)
+  employeeId      String
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+  roundId         String?
+  round           OrderRound?    @relation(fields: [roundId], references: [id])
+  benefitMode     BenefitMode? // welfare orders: how the round treated this employee's department
+  status          OrderStatus    @default(PLACED)
+  deliveryMethod  DeliveryMethod @default(WORKPLACE)
+  deliveryAddress String? // snapshot of work location / home address
+  subtotal        Int            @default(0) // price of everything not covered by fixed entitlement
+  creditUsed      Int            @default(0)
+  deliveryFee     Int            @default(0)
+  total           Int            @default(0) // what the employee pays: subtotal - creditUsed + deliveryFee
+  amountPaid      Int            @default(0)
+  paymentStatus   PaymentStatus  @default(NOT_REQUIRED)
+  paymentMethod   PaymentMethod?
+  carrier         String?
+  trackingNumber  String?
+  editCount       Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  items     OrderItem[]
+  events    OrderEvent[]
+  payments  Payment[]
+  exchanges ExchangeRequest[]
+
+  @@unique([employeeId, roundId])
+  @@index([roundId, status])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  size        String
+  length      String?
+  quantity    Int
+  entitledQty Int // pieces covered by fixed entitlement
+  extraQty    Int // pieces priced (paid by credit and/or the employee)
+  unitPrice   Int
+  note        String?
+
+  @@index([orderId])
+}
+
+model OrderEvent {
+  id        String       @id @default(cuid())
+  orderId   String
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus?
+  message   String
+  createdAt DateTime     @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount      Int
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  provider    String
+  providerRef String?
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([orderId])
+}
+
+model ExchangeRequest {
+  id         String         @id @default(cuid())
+  orderId    String
+  order      Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  reason     ExchangeReason
+  details    String
+  status     ExchangeStatus @default(REQUESTED)
+  adminNote  String?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([orderId])
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind       String // ROUND_OPEN, ORDER_CONFIRMED, ORDER_EDITED, PAYMENT, STATUS, EXTENSION, REMINDER, ACCOUNT, EXCHANGE
+  title      String
+  body       String
+  href       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([employeeId, createdAt])
+}
+
+// Every email/SMS the app tried to send. With mock providers this is the only place they go.
+model OutboundMessage {
+  id        String   @id @default(cuid())
+  channel   String // SMS, EMAIL, LINE
+  to        String
+  subject   String?
+  body      String
+  provider  String
+  createdAt DateTime @default(now())
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  organization String? // e.g. "TTB · ฝ่ายบุคคล", "Songsmai · ฝ่ายผลิต"
+  passwordHash String
+  role         AdminRole @default(ADMIN)
+  createdAt    DateTime  @default(now())
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+// Last order number handed out per prefix (BL26-, NJ26-, PO-).
+model OrderCounter {
+  prefix String @id
+  value  Int
+}

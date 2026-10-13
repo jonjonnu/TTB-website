@@ -1,0 +1,2 @@
+﻿employee_code,first_name,last_name,gender,department,sub_department,position,manager,start_date,work_location,work_address,email,phone
+1999001,ทดสอบ,ตัวอย่าง,F,Branch,บริการลูกค้า,พนักงานทั่วไป,วรรณา ก.,2022-05-01,สาขาเซ็นทรัลพระราม 9,ชั้น 4 ศูนย์การค้าเซ็นทรัลพระราม 9 กรุงเทพฯ 10310,test1@example.com,0810000001
