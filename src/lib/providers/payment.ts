@@ -1,10 +1,14 @@
 // Payment for items beyond the free quota and for home delivery.
-// The mock provider shows a sample PromptPay QR / card form and lets the tester mark it paid.
-// To go live, implement PaymentProvider with a Thai gateway (e.g. Omise / Opn, 2C2P, GB Prime Pay)
-// and select it with PAYMENT_PROVIDER. Its webhook should call markPaymentPaid().
+// PAYMENT_PROVIDER picks one:
+// - "mock" (default) shows a sample QR / card form and lets the tester mark it paid.
+// - "omise" takes real payments through Omise (Opn Payments). Needs OMISE_PUBLIC_KEY and OMISE_SECRET_KEY;
+//   test keys (pkey_test_/skey_test_) move no real money. See src/lib/payments.ts for how a charge settles.
+import { createCharge } from "./omise";
+
 export type PaymentMethodName = "PROMPTPAY" | "MOBILE_BANKING" | "CREDIT_CARD" | "DEBIT_CARD";
 
-export type PaymentSession = { providerRef: string; promptPayPayload?: string };
+/** providerRef is empty when the charge is only created once the employee picks a bank or enters a card. */
+export type PaymentSession = { providerRef?: string; promptPayPayload?: string };
 
 export interface PaymentProvider {
   name: string;
@@ -24,11 +28,24 @@ const mockProvider: PaymentProvider = {
   },
 };
 
+const omiseProvider: PaymentProvider = {
+  name: "omise",
+  simulated: false,
+  async createSession({ paymentId, amount, method }) {
+    // PromptPay needs no input from the employee, so the QR is created right away.
+    if (method !== "PROMPTPAY") return {};
+    const charge = await createCharge({ paymentId, amount, sourceType: "promptpay", description: `TTB uniform ${paymentId}` });
+    return { providerRef: charge.id };
+  },
+};
+
 export function payments(): PaymentProvider {
   const name = process.env.PAYMENT_PROVIDER ?? "mock";
   switch (name) {
     case "mock":
       return mockProvider;
+    case "omise":
+      return omiseProvider;
     default:
       throw new Error(`Unknown PAYMENT_PROVIDER "${name}"`);
   }

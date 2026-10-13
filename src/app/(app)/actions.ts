@@ -2,6 +2,7 @@
 
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -17,7 +18,9 @@ import {
   pricedWelfareCart,
   welfareRoundFor,
 } from "@/lib/portal";
-import { payments } from "@/lib/providers/payment";
+import { payments, type PaymentProvider } from "@/lib/providers/payment";
+import { createCharge, OMISE_BANKS } from "@/lib/providers/omise";
+import { markPaymentPaid, settleOmiseCharge } from "@/lib/payments";
 import { requireEmployee } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
 import type { ActionState } from "@/components/forms";
@@ -139,8 +142,11 @@ const paymentMethod = z.enum(["PROMPTPAY", "MOBILE_BANKING", "CREDIT_CARD", "DEB
 
 async function startPayment(orderId: string, amount: number, method: PaymentMethod) {
   const payment = await db.payment.create({ data: { orderId, amount, method, provider: payments().name } });
-  const session = await payments().createSession({ paymentId: payment.id, amount, method });
-  await db.payment.update({ where: { id: payment.id }, data: { providerRef: session.providerRef } });
+  // If the gateway is briefly unreachable the pay page offers to try again, so the order is not lost.
+  const session = await payments()
+    .createSession({ paymentId: payment.id, amount, method })
+    .catch((e) => (console.error(e), {} as Awaited<ReturnType<PaymentProvider["createSession"]>>));
+  await db.payment.update({ where: { id: payment.id }, data: { providerRef: session.providerRef ?? null } });
   redirect(`/pay/${payment.id}`);
 }
 
@@ -288,21 +294,42 @@ export async function simulatePayment(form: FormData) {
   redirect(`/orders/${payment.orderId}?done=1`);
 }
 
-async function markPaymentPaid(paymentId: string) {
-  const payment = await db.payment.update({ where: { id: paymentId }, data: { status: "PAID", paidAt: new Date() } });
-  const order = await db.order.update({
-    where: { id: payment.orderId },
-    data: { amountPaid: { increment: payment.amount } },
+/** Omise: the employee picked a bank app or entered a card (tokenized in the browser by Omise.js). */
+export async function payWithOmise(_: ActionState, form: FormData): Promise<ActionState> {
+  const emp = await requireEmployee();
+  if (payments().name !== "omise") return { error: "ยังไม่ได้เชื่อมระบบรับเงิน" };
+  const payment = await db.payment.findFirst({
+    where: { id: String(form.get("paymentId")), provider: "omise", order: { employeeId: emp.id } },
+    include: { order: true },
   });
-  const settled = order.amountPaid >= order.total;
-  await db.order.update({ where: { id: order.id }, data: { paymentStatus: settled ? "PAID" : "PENDING" } });
-  await db.orderEvent.create({ data: { orderId: order.id, message: `ชำระเงิน ${baht(payment.amount)}` } });
-  await notifyEmployee(order.employeeId, {
-    kind: order.editCount > 0 ? "ORDER_EDITED" : "ORDER_CONFIRMED",
-    title: order.editCount > 0 ? "แก้ไขคำสั่งซื้อแล้ว" : "ยืนยันคำสั่งซื้อ",
-    body: `${order.orderNumber} ยืนยันแล้ว ชำระ ${baht(payment.amount)} สำเร็จ`,
-    href: `/orders/${order.id}`,
-  });
+  if (!payment) return { error: "ไม่พบรายการชำระเงิน" };
+  if (payment.status === "PAID") redirect(`/orders/${payment.orderId}?done=1`);
+
+  const bank = OMISE_BANKS.find((b) => b.type === form.get("bank"))?.type;
+  const cardToken = String(form.get("cardToken") ?? "");
+  const isCard = payment.method === "CREDIT_CARD" || payment.method === "DEBIT_CARD";
+  if (payment.method === "MOBILE_BANKING" && !bank) return { error: "กรุณาเลือกธนาคาร" };
+  if (isCard && !/^tokn_[a-zA-Z0-9_]+$/.test(cardToken)) return { error: "ข้อมูลบัตรไม่ถูกต้อง" };
+
+  const h = await headers();
+  const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("x-forwarded-host") ?? h.get("host")}`;
+  const base = { paymentId: payment.id, amount: payment.amount, description: payment.order.orderNumber, returnUri: `${origin}/pay/${payment.id}/return` };
+  let charge;
+  try {
+    charge = await createCharge(isCard ? { ...base, cardToken } : payment.method === "PROMPTPAY" ? { ...base, sourceType: "promptpay" } : { ...base, sourceType: bank! });
+  } catch (e) {
+    console.error(e);
+    return { error: "เชื่อมต่อระบบชำระเงินไม่สำเร็จ กรุณาลองใหม่" };
+  }
+  await db.payment.update({ where: { id: payment.id }, data: { providerRef: charge.id } });
+  if (charge.status === "successful" && charge.paid) {
+    await settleOmiseCharge(charge.id);
+    redirect(`/orders/${payment.orderId}?done=1`);
+  }
+  if (charge.status === "failed") return { error: charge.failure_message ?? "การชำระเงินไม่สำเร็จ" };
+  // Bank app or card 3-D Secure: Omise sends the employee back to /pay/[id]/return.
+  if (charge.authorize_uri) redirect(charge.authorize_uri);
+  redirect(`/pay/${payment.id}`);
 }
 
 // ---------- after-sales ----------

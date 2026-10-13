@@ -54,7 +54,19 @@ Sample logins (from the seed):
 2. Before the first deploy, open **Storage → Create → Neon (Postgres)** and connect it; this sets `DATABASE_URL`.
 3. In **Settings → Environment Variables** add `AUTH_SECRET` (any random text, 16+ characters) and `SHOW_TEST_OTP=true`. SMS and payment default to the mock providers.
 4. Deploy. The build creates the database tables and, if the database is empty, loads the sample data (`vercel-build`). It never overwrites a database that already has data.
-5. Later, add the domain (e.g. `ttb.songsmai1938.com`) under **Settings → Domains**.
+5. To take real payments with Omise, see below.
+6. Later, add the domain (e.g. `ttb.songsmai1938.com`) under **Settings → Domains**.
+
+## Payments with Omise
+
+Without setup the app uses a pretend payment screen. To use Omise (Opn Payments):
+
+1. In the Omise Dashboard open **Keys** and copy the public key (`pkey_…`) and secret key (`skey_…`). Start with the **test** keys.
+2. In Vercel **Settings → Environment Variables** add `PAYMENT_PROVIDER=omise`, `OMISE_PUBLIC_KEY` and `OMISE_SECRET_KEY`, then redeploy.
+3. Optional but recommended: in the Omise Dashboard **Webhooks**, set `https://<your-site>/api/omise/webhook`. If a webhook address is already set there (for example for your Shopify store), leave it as it is; the app also checks with Omise when the employee returns to the payment page.
+4. Make sure PromptPay, mobile banking and cards are enabled on the Omise account.
+
+PromptPay shows Omise's QR and the page updates itself once paid. Mobile banking opens the bank app. Card details are sent from the browser straight to Omise (Omise.js); the server only gets a one-time token, then 3-D Secure runs if the card needs it. Every payment is confirmed by asking Omise directly, never by trusting the browser or the webhook body.
 
 ## Code map
 
@@ -63,4 +75,4 @@ Sample logins (from the seed):
 - `src/app/(app)` employee app; `actions.ts` holds cart, checkout, payment and edit logic
 - `src/app/admin` admin panel; `actions.ts` holds rounds, extensions, imports, status updates
 - `src/lib/entitlements.ts`, `src/lib/rounds.ts` pure rules (quota, pricing, timeline) with tests
-- `src/lib/providers/` the OTP/SMS/email and payment hook-in points
+- `src/lib/providers/` the OTP/SMS/email and payment hook-in points (`omise.ts` for Omise); `src/lib/payments.ts` confirms payments
